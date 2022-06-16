@@ -54,9 +54,10 @@ npm install ckydb
 - The name of the current log (`current_log_file`) file is also kept in memory, and updated when a new log file is
   created.
 - There is also a ".del" file that holds all the `key: TIMESTAMPED-key` pairs that have been marked for deletion.
-- At a predefined interval (5 minutes by default), a back ground task deletes the values from ".cky" and ".log" files
+- At a predefined interval (5 minutes by default), a background task deletes the values from ".cky" and ".log" files
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
+- On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
 - It is possible for ckydb to be configured to sanitize all keys and values to replace any potential occurrences of the
   token used to separate the key-value pairs on file. This avoids weird DataCorruptionError's. By default, this is
   turned off as it impacts performance heavily.
@@ -105,19 +106,27 @@ npm install ckydb
 
 ### File formats
 
-- The file format of the ".idx" index files and  ".del" files is just "key:<token> TIMESTAMPED-key" separated by a
+- The file format of the ".idx" index files is just "key<key_value_separator>TIMESTAMPED-key<token>" separated by a
+  unique token e.g. "{&*/%}" and a key_value_separator e.g. "[><?&(^#]"
+
+```
+goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pig[><?&(^#]1655304770534578-pig{&*/%}fish[><?&(^#]1655303775538278-fish
+```
+
+- The file format of the ".del" files is just "TIMESTAMPED-key<token>" separated by a
   unique token e.g. "{&*/%}"
 
 ```
-goat:{&*/%}1655304770518678-goat{&*/%}hen:{&*/%}1655304670510698-hen{&*/%}pig:{&*/%}1655304770534578-pig{&*/%}fish:{&*/%}1655303775538278-fish
+1655304770518678-goat{&*/%}1655304670510698-hen{&*/%}1655304770534578-pig{&*/%}1655303775538278-fish
 ```
 
-- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key:<token>value" separated by a unique token
-  e.g. "{&*/%}"
+- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key<key_value_separator>value<token>" separated by a unique token
+  e.g. "{&*/%}" and a key_value_separator like "[><?&(^#]"
 
 ```
-1655304770518678-goat:{&*/%}678 months{&*/%}1655304670510698-hen:{&*/%}567 months{&*/%}1655304770534578-pig:{&*/%}70 months{&*/%}1655303775538278-fish:{&*/%}8990 months
+1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months
 ```
+
 
 **Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
 weird errors. However, the escaping is expensive and it is thus turned off by default.**

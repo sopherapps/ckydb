@@ -3,7 +3,7 @@ import unittest
 
 import ckydb
 
-db_folder = os.path.join(os.path.dirname(__file__), "assets", "db")
+db_folder = os.path.join(os.path.dirname(__file__), "assets", "test_ckydb_db")
 
 
 class TestCkydb(unittest.TestCase):
