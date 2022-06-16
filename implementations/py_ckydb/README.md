@@ -118,8 +118,8 @@ python main.py
 - On `ckydb.set(key, value)`:
     - the corresponding TIMESTAMPED key is searched for in the index
     - if the key does not exist, a new TIMESTAMPED key is created and added to the index with its user-defined key
-    - this TIMESTAMPED key and its value are then added to `memtable`.
     - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
+    - this TIMESTAMPED key and its value are then added to `memtable`.
     - this TIMESTAMPED key and its value are then added to the current log file (".log")
     - If any error occurs on any of these steps, the preceding steps are reversed and the error returned/raised/thrown
       in the call
@@ -161,21 +161,21 @@ python main.py
   unique token e.g. "{&*/%}" and a key_value_separator e.g. "[><?&(^#]"
 
 ```
-goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pig[><?&(^#]1655304770534578-pig{&*/%}fish[><?&(^#]1655303775538278-fish
+goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pig[><?&(^#]1655304770534578-pig{&*/%}fish[><?&(^#]1655303775538278-fish$%#@*&^&
 ```
 
 - The file format of the ".del" files is just "TIMESTAMPED-key<token>" separated by a
   unique token e.g. "{&*/%}"
 
 ```
-1655304770518678-goat{&*/%}1655304670510698-hen{&*/%}1655304770534578-pig{&*/%}1655303775538278-fish
+1655304770518678-goat{&*/%}1655304670510698-hen{&*/%}1655304770534578-pig{&*/%}1655303775538278-fish$%#@*&^&
 ```
 
 - The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key<key_value_separator>value<token>" separated by a unique token
   e.g. "{&*/%}" and a key_value_separator like "[><?&(^#]"
 
 ```
-1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months
+1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
 
 **Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid

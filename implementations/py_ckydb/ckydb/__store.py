@@ -58,7 +58,17 @@ class Store:
         :param k: the key for the given value
         :param v: the value to set
         """
-        pass
+        timestamped_key = None
+
+        try:
+            if self.__should_sanitize:
+                k, v = self.__sanitize_key_value_pair(key=k, value=v)
+
+            timestamped_key = self.__get_timestamped_key(k)
+            self.__save_key_value_pair(key=timestamped_key, value=v)
+        except Exception:
+            self.__delete_key_value_pair(key=timestamped_key)
+            self.__remove_timestamped_key(k)
 
     def get(self, k: str) -> str:
         """
@@ -126,6 +136,28 @@ class Store:
         with open(path, "w") as f:
             f.write(content)
 
+    def __save_key_value_pair(self, key: str, value: str):
+        """
+        Saves the given key value pair in memtable and in the log file
+        :param key:
+        :param value:
+        """
+        self._memtable[key] = value
+
+        with open(self.__log_file_path, "a") as f:
+            f.write(f"{key}{self._key_value_separator}{value}{self._token_separator}")
+
+    def __delete_key_value_pair(self, key: str):
+        """
+        Removes the given key value pair for the given key in memtable and in the log file
+        :param key: the timestamped key to delete
+        """
+        value = self._memtable.pop(key, None)
+        if value is None:
+            return
+
+        self.__delete_key_values_from_file(path=self.__log_file_path, keys=[key])
+
     def __get_keys_to_delete(self) -> List[str]:
         """
         Gets the list of keys to delete, as recorded in the del file
@@ -135,7 +167,7 @@ class Store:
         with open(del_file_path) as f:
             content = "\n".join(f.readlines())
 
-        return content.split(self._token_separator)
+        return content.rstrip(self._token_separator).split(self._token_separator)
 
     def __create_log_file(self):
         """
@@ -156,8 +188,7 @@ class Store:
         :return:
         """
         if self.__del_filename not in os.listdir(self.__db_path):
-            file_path = os.path.join(self.__db_path, self.__del_filename)
-            Path(file_path).touch()
+            Path(self.__del_file_path).touch()
 
     def __create_idx_file(self):
         """
@@ -165,8 +196,7 @@ class Store:
         :return:
         """
         if self.__index_filename not in os.listdir(self.__db_path):
-            file_path = os.path.join(self.__db_path, self.__index_filename)
-            Path(file_path).touch()
+            Path(self.__index_file_path).touch()
 
     def __create_db_folder(self):
         """
@@ -205,7 +235,7 @@ class Store:
         if content == "":
             return {}
 
-        key_value_pairs = content.split(self._token_separator)
+        key_value_pairs = content.rstrip(self._token_separator).split(self._token_separator)
         return dict(kv.split(self._key_value_separator) for kv in key_value_pairs)
 
     def __load_cache_from_disk(self, data_file: str, start: str, stop: str):
@@ -262,14 +292,38 @@ class Store:
         """
         pass
 
-    def __generate_timestamped_key_pair(self, key: str) -> Tuple[str, str]:
+    def __get_timestamped_key(self, key: str) -> str:
         """
-        Generates a new key, timestamped_key pair
+        Gets the timestamped key from index or generates one if not exists and adds it to index file
 
         :param key: - the key to be timestamped
-        :return: (str, str) - the (key, timestamped_key) pair
+        :return: str - the timestamped key
         """
-        pass
+        timestamped_key = self._index.get(key, None)
+        if timestamped_key is None:
+            timestamped_key = f"{time.time_ns()}-{key}"
+            self._index[key] = timestamped_key
+
+            with open(self.__index_file_path, "a") as f:
+                f.write(f"{key}{self._key_value_separator}{timestamped_key}{self._token_separator}")
+
+        return timestamped_key
+
+    def __remove_timestamped_key(self, key: str):
+        """
+        Reverse of __get_timestamped_key
+        Removes the key from index and from index file
+
+        :param key: - the key to be removed from the index file
+        """
+        timestamped_key = self._index.pop(key, None)
+        if timestamped_key is None:
+            return
+
+        with open(self.__index_file_path, "r+") as f:
+            content = "\n".join(f.readlines())
+            key_timestamped_key_pair = f"{key}{self._key_value_separator}{timestamped_key}{self._token_separator}"
+            f.write(content.replace(key_timestamped_key_pair, ""))
 
     def __update_sorted_data_files_list(self):
         """
@@ -286,6 +340,18 @@ class Store:
         :param key: - the key to be marked for deletion
         """
         pass
+
+    @property
+    def __index_file_path(self):
+        return os.path.join(self.__db_path, self.__index_filename)
+
+    @property
+    def __del_file_path(self):
+        return os.path.join(self.__db_path, self.__del_filename)
+
+    @property
+    def __log_file_path(self):
+        return os.path.join(self.__db_path, f"{self._current_log_file}.log")
 
 
 class Cache:

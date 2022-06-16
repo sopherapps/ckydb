@@ -182,8 +182,8 @@ class TestStore(unittest.TestCase):
 
     def test_vacuum(self):
         """vacuum should delete all marked-for-delete key-values from .cky and .log files"""
-        expected_log_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months"
-        expected_data_file_content = ["1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months", ""]
+        expected_log_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months$%#@*&^&"
+        expected_data_file_content = ["1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", ""]
         log_file_path = os.path.join(db_folder, self.log_filename)
         data_file_paths = [os.path.join(db_folder, file) for file in self.data_files]
 
@@ -198,7 +198,19 @@ class TestStore(unittest.TestCase):
     def test_should_sanitize_true(self):
         """should sanitize key and value in .log file;
          return unsanitized key-value on get and delete key-value given unsanitized key"""
-        pass
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        store = ckydb.Store(db_path=db_folder, max_file_size_kb=1, should_sanitize=True)
+        token = store._token_separator
+        key_value_separator = store._key_value_separator
+        key, value = f"{now}-{key_value_separator}", f"{token}_foo"
+
+        self.__add_dummy_db_data()
+        store.load()
+        store.set(k=key, v=value)
+
+        self.assertEqual(value, store.get(key))
+        store.delete(key)
+        self.assertRaises(ckydb.exc.NotFoundError, store.get)
 
     def test_max_file_size_kb(self):
         """should transform .log file to .cky if size of .log file comes close to max_file_size"""
