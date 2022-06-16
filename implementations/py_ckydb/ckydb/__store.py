@@ -2,7 +2,7 @@
 Module containing the actual store representation
 """
 import os
-import re
+import shutil
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -86,7 +86,8 @@ class Store:
         Clears all the data in the database including that on disk and that
         in memory
         """
-        pass
+        self.__clear_disk()
+        self.load()
 
     def vacuum(self):
         """
@@ -237,7 +238,7 @@ class Store:
         """
         Clears all data on disk
         """
-        pass
+        shutil.rmtree(self.__db_path, ignore_errors=True)
 
     def __sanitize_key_value_pair(self, key: str, value: str) -> Tuple[str, str]:
         """

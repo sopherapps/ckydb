@@ -86,5 +86,5 @@ cython_debug/
 
 .idea/
 
-assets/test_ckydb_db/
-assets/test_store_db/
+tests/assets/test_ckydb_db/
+tests/assets/test_store_db/
