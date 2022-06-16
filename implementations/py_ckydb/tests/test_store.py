@@ -20,7 +20,10 @@ class TestStore(unittest.TestCase):
         self.log_filename = "1655375171402014000.log"
         self.index_filename = "index.idx"
         self.del_filename = "delete.del"
-        self.data_file_filename = "1655375120328186000.cky"
+        self.data_files = sorted([
+            "1655375120328185000.cky",
+            "1655375120328186000.cky",
+        ])
 
     def tearDown(self) -> None:
         """Clean up"""
@@ -30,6 +33,8 @@ class TestStore(unittest.TestCase):
         """load should initialize the db_folder from disk"""
         expected_cache = ckydb.Cache()
         expected_index = {
+            "cow": "1655375120328185000-cow",
+            "dog": "1655375120328185100-dog",
             "goat": "1655304770518678-goat",
             "hen": "1655304670510698-hen",
             "pig": "1655304770534578-pig",
@@ -41,8 +46,8 @@ class TestStore(unittest.TestCase):
             "1655304770534578-pig": "70 months",
             "1655303775538278-fish": "8990 months",
         }
-        expected_data_files = [self.data_file_filename]
-        expected_current_log_file = self.log_filename
+        expected_data_files = [file.rstrip(".cky") for file in self.data_files]
+        expected_current_log_file = self.log_filename.rstrip(".log")
 
         self.__add_dummy_db_data()
         self.store.load()
@@ -56,8 +61,8 @@ class TestStore(unittest.TestCase):
     def test_load_empty_db(self):
         """load creates the db folder if not exists, and adds .idx, .del and .log files"""
         empty_store = ckydb.Store(db_folder, max_file_size_kb=1, should_sanitize=False)
-        expected_files = [
-            self.log_filename, self.del_filename, self.index_filename, self.data_file_filename]
+        expected_files = self.data_files + [
+            self.log_filename, self.del_filename, self.index_filename]
         expected_files.sort()
 
         self.store.load()
@@ -70,8 +75,8 @@ class TestStore(unittest.TestCase):
     def test_clear(self):
         """clear should reset all properties and delete all data on disk"""
         empty_store = ckydb.Store(db_folder, max_file_size_kb=1, should_sanitize=False)
-        expected_files = [
-            self.log_filename, self.del_filename, self.index_filename, self.data_file_filename]
+        expected_files = self.data_files + [
+            self.log_filename, self.del_filename, self.index_filename]
         expected_files.sort()
 
         self.__add_dummy_db_data()
@@ -127,7 +132,7 @@ class TestStore(unittest.TestCase):
     def test_set_old_key(self):
         """set same old key should overwrite key-value on data (.cky) file"""
         key, value = "foo", "bar"
-        data_file_path = os.path.join(db_folder, self.data_file_filename)
+        data_file_path = os.path.join(db_folder, self.data_files[-1])
         token = self.store._token_separator
         key_value_separator = self.store._key_value_separator
 
@@ -169,18 +174,18 @@ class TestStore(unittest.TestCase):
 
     def test_vacuum(self):
         """vacuum should delete all marked-for-delete key-values from .cky and .log files"""
-        expected_data_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months"
-        expected_log_file_content = ""
+        expected_log_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months"
+        expected_data_file_content = ["1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months", ""]
         log_file_path = os.path.join(db_folder, self.log_filename)
-        data_file_path = os.path.join(db_folder, self.data_file_filename)
+        data_file_paths = [os.path.join(db_folder, file) for file in self.data_files]
 
         self.__add_dummy_db_data()
         self.store.vacuum()
-        data_file_content = self.__read_to_str(data_file_path)
+        data_file_content = [self.__read_to_str(data_file_path) for data_file_path in data_file_paths]
         log_file_content = self.__read_to_str(log_file_path)
 
         self.assertEqual(expected_log_file_content, log_file_content)
-        self.assertEqual(expected_data_file_content, data_file_content)
+        self.assertListEqual(expected_data_file_content, data_file_content)
 
     def test_should_sanitize_true(self):
         """should sanitize key and value in .log file;

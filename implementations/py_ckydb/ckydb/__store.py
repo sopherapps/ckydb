@@ -44,7 +44,9 @@ class Store:
         self.__create_del_file()
         self.__create_idx_file()
         self.vacuum()
-        self.__load_from_disk()
+        self.__load_file_props_from_disk()
+        self.__load_index_from_disk()
+        self.__load_memtable_from_disk()
 
     def set(self, k: str, v: str):
         """
@@ -125,14 +127,11 @@ class Store:
         Gets the list of keys to delete, as recorded in the del file
         :return:
         """
-        try:
-            del_file_path = os.path.join(self.__db_path, self.__del_filename)
-            with open(del_file_path) as f:
-                content = "\n".join(f.readlines())
+        del_file_path = os.path.join(self.__db_path, self.__del_filename)
+        with open(del_file_path) as f:
+            content = "\n".join(f.readlines())
 
-            return content.split(self._token_separator)
-        except FileNotFoundError:
-            return []
+        return content.split(self._token_separator)
 
     def __create_log_file(self):
         """
@@ -163,12 +162,57 @@ class Store:
         """
         pass
 
-    def __load_from_disk(self):
+    def __load_memtable_from_disk(self):
+        """Loads the memtable from the current log .log file"""
+        self._memtable = self.__get_key_value_pairs_from_file(f"{self._current_log_file}.log")
+
+    def __load_index_from_disk(self):
+        """Loads the index from the index .idx file"""
+        self._index = self.__get_key_value_pairs_from_file(self.__index_filename)
+
+    def __get_key_value_pairs_from_file(self, filename: str) -> Dict[str, str]:
         """
-        Loads the properties of this store from the data found on disk
-        It updates properties like cache, memtable, index, data_files
+        Extracts the key-value pairs saved in the given file
+
+        :param filename: - the filename within the db folder
+        :return: - the key-value pairs as a dictionary
+        """
+        file = os.path.join(self.__db_path, filename)
+
+        with open(file) as f:
+            content = "\n".join(f.readlines())
+
+        if content == "":
+            return {}
+
+        key_value_pairs = content.split(self._token_separator)
+        return dict(kv.split(self._key_value_separator) for kv in key_value_pairs)
+
+    def __load_cache_from_disk(self, data_file: str, start: str, stop: str):
+        """
+        Loads the cache from the data file .cky file, plus the start and stop
+
+        :param data_file: - the data file name to load into cache
+        :param start: - the start timestamp for the cache
+        :param stop: - the stop timestamp for the cache
         """
         pass
+
+    def __load_file_props_from_disk(self):
+        """
+        Updates the __data_files and the __current_log_file from disk
+        """
+        self._data_files = []
+        self._current_log_file = ""
+
+        files = os.listdir(self.__db_path)
+        for file in files:
+            if file.endswith(".log"):
+                self._current_log_file = file.rstrip(".log")
+            if file.endswith(".cky"):
+                self._data_files.append(file.rstrip(".cky"))
+
+        self._data_files.sort()
 
     def __clear_disk(self):
         """
