@@ -17,7 +17,6 @@ class Ckydb:
                  vacuum_interval_sec=(5 * 60),
                  should_sanitize=False):
         self.__vacuum_interval_sec = vacuum_interval_sec
-        self.__create_db_folder(db_path=db_path)
         self.__store = Store(db_path=db_path,
                              max_file_size_kb=max_file_size_kb,
                              should_sanitize=should_sanitize)
@@ -59,14 +58,6 @@ class Ckydb:
         Clears all the data in the database
         """
         pass
-
-    @staticmethod
-    def __create_db_folder(db_path: str):
-        """
-        Creates the db folder if not exists
-        :param db_path: the path to the folder
-        """
-        os.makedirs(db_path, exist_ok=True)
 
     def __start_vacuum_cycles(self, store: Store):
         """

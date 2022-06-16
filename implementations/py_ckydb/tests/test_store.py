@@ -60,16 +60,20 @@ class TestStore(unittest.TestCase):
 
     def test_load_empty_db(self):
         """load creates the db folder if not exists, and adds .idx, .del and .log files"""
-        empty_store = ckydb.Store(db_folder, max_file_size_kb=1, should_sanitize=False)
-        expected_files = self.data_files + [
-            self.log_filename, self.del_filename, self.index_filename]
-        expected_files.sort()
+        expected_cache = ckydb.Cache()
+        expected_files = [self.del_filename, self.index_filename]
 
         self.store.load()
+        expected_files.append(f"{self.store._current_log_file}.log")
+        expected_files.sort()
         files_in_db_folder = os.listdir(db_folder)
         files_in_db_folder.sort()
 
-        self.assertEqual(self.store, empty_store)
+        self.assertEqual(expected_cache, self.store._cache)
+        self.assertIsNot(self.store._current_log_file, "")
+        self.assertDictEqual({}, self.store._index)
+        self.assertDictEqual({}, self.store._memtable)
+        self.assertListEqual([], self.store._data_files)
         self.assertEqual(expected_files, files_in_db_folder)
 
     def test_clear(self):

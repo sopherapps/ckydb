@@ -3,6 +3,8 @@ Module containing the actual store representation
 """
 import os
 import re
+import time
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 
@@ -40,6 +42,7 @@ class Store:
         """
         Loads the database from disk and updates its in-memory state
         """
+        self.__create_db_folder()
         self.__create_log_file()
         self.__create_del_file()
         self.__create_idx_file()
@@ -138,21 +141,37 @@ class Store:
         Creates a new ".log" file if not exist
         :return:
         """
-        pass
+        log_files = [file for file in os.listdir(self.__db_path) if file.endswith(".log")]
+
+        if len(log_files) == 0:
+            log_filename = f"{time.time_ns()}"
+            log_file_path = os.path.join(self.__db_path, f"{log_filename}.log")
+            Path(log_file_path).touch()
+            self._current_log_file = log_filename
 
     def __create_del_file(self):
         """
         Creates a new ".del" file if not exist
         :return:
         """
-        pass
+        if self.__del_filename not in os.listdir(self.__db_path):
+            file_path = os.path.join(self.__db_path, self.__del_filename)
+            Path(file_path).touch()
 
     def __create_idx_file(self):
         """
         Creates a new ".idx" file if not exist
         :return:
         """
-        pass
+        if self.__index_filename not in os.listdir(self.__db_path):
+            file_path = os.path.join(self.__db_path, self.__index_filename)
+            Path(file_path).touch()
+
+    def __create_db_folder(self):
+        """
+        Creates the db folder if not exists
+        """
+        os.makedirs(self.__db_path, exist_ok=True)
 
     def __transform_log_file_to_data_file(self, log_file_path) -> str:
         """
