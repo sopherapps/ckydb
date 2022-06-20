@@ -168,12 +168,34 @@ class TestStore(unittest.TestCase):
     def test_get_old_key(self):
         """get of old key should update cache with all data from selected old data file,
         and then return the value"""
-        pass
+        key, expected_value = "cow", "500 months"
+        expected_initial_cache = ckydb.Cache()
+        expected_final_cache = ckydb.Cache(
+            data={'1655375120328185000-cow': '500 months', '1655375120328185100-dog': '23 months'},
+            start=self.data_files[0].rstrip(".cky"),
+            end=self.data_files[1].rstrip(".cky"))
+
+        self.__add_dummy_db_data()
+        self.store.load()
+        initial_cache = self.store._cache
+        value = self.store.get(key)
+        final_cache = self.store._cache
+
+        self.assertEqual(expected_value, value)
+        self.assertEqual(expected_initial_cache, initial_cache)
+        self.assertEqual(expected_final_cache, final_cache)
 
     def test_get_old_key_again(self):
         """get of old key again should return value directly from cache, no update to cache"""
-        # to test, one can delete the data_file from the db first
-        pass
+        key, expected_value = "cow", "500 months"
+
+        self.__add_dummy_db_data()
+        self.store.load()
+        self.store.get(key)
+        # remove the database files to show data is got straight from memory on next get
+        self.__clear_dummy_db_data()
+        value = self.store.get(key)
+        self.assertEqual(expected_value, value)
 
     def test_delete(self):
         """delete should remove key-value from index and log file;
@@ -188,7 +210,8 @@ class TestStore(unittest.TestCase):
     def test_vacuum(self):
         """vacuum should delete all marked-for-delete key-values from .cky and .log files"""
         expected_log_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months$%#@*&^&"
-        expected_data_file_content = ["1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", ""]
+        expected_data_file_content = [
+            "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", ""]
         log_file_path = os.path.join(db_folder, self.log_filename)
         data_file_paths = [os.path.join(db_folder, file) for file in self.data_files]
 
