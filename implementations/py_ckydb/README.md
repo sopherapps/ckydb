@@ -193,6 +193,14 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 **Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
 weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
+### Options for Scheduled Operations
+ - Replace the scheduled ops with ops that occur when new key is added (to change log file). this will slow down
+each set even further because one has to keep track of size of file as well as on delete, one has to search through the
+keys to find which to delete.
+ - Add event loop in the controller that keeps track of time of vacuuming and also keeps checking for size of 
+the log file.- Event loop is a little hard to implement in python without including extra complicated code. We could try asyncio
+   (https://docs.python.org/3/library/asyncio.html)
+ - 
 ## Acknowledgments
 
 - We can do nothing without God (John 15: 5). Glory be to Him.

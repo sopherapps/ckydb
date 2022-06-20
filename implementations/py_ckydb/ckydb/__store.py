@@ -136,6 +136,15 @@ class Store:
         with open(self.__del_file_path, "w") as f:
             pass
 
+    def roll_log(self):
+        """
+        Rolls the log file, converting it into a .cky file and creating a new .log file
+        """
+        os.rename(self.__log_file_path, self.__log_file_path.replace(".log", ".cky"))
+        self._memtable = {}
+        self._data_files.append(self._current_log_file)
+        self.__create_log_file()
+
     def __delete_key_values_from_file(self, path: str, keys: List[str]):
         """
         Deletes the key-value pairs in the file at `path` for the given keys
@@ -235,14 +244,6 @@ class Store:
         Creates the db folder if not exists
         """
         os.makedirs(self.__db_path, exist_ok=True)
-
-    def __transform_log_file_to_data_file(self, log_file_path) -> str:
-        """
-        Transforms a given log file into a data file
-        :param log_file_path: the path to the log file
-        :return: str - the path to the new log file
-        """
-        pass
 
     def __load_memtable_from_disk(self):
         """Loads the memtable from the current log .log file"""
