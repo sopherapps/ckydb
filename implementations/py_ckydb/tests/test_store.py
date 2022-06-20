@@ -139,20 +139,19 @@ class TestStore(unittest.TestCase):
 
     def test_set_old_key(self):
         """set same old key should overwrite key-value on data (.cky) file"""
-        key, value = "foo", "bar"
-        data_file_path = os.path.join(db_folder, self.data_files[-1])
-        token = self.store._token_separator
+        key, value = "cow", "foo-again"
+        data_file_path = os.path.join(db_folder, self.data_files[0])
         key_value_separator = self.store._key_value_separator
 
         self.__add_dummy_db_data()
         self.store.load()
         self.store.set(k=key, v=value)
         timestamped_key = self.store._index[key]
-        expected_data_file_entry = f"{token}{timestamped_key}{key_value_separator}{value}"
-        value_in_memtable = self.store._memtable[timestamped_key]
+        expected_data_file_entry = f"{timestamped_key}{key_value_separator}{value}"
+        value_in_cache = self.store._cache.data[timestamped_key]
         data_file_content = self.__read_to_str(data_file_path)
 
-        self.assertEqual(value, value_in_memtable)
+        self.assertEqual(value, value_in_cache)
         self.assertIn(expected_data_file_entry, data_file_content)
 
     def test_get_recent_key(self):

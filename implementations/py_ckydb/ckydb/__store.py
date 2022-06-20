@@ -5,13 +5,18 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+
+from ckydb.__exc import CorruptedDataError
+
+_DEFAULT_TOKEN_SEPARATOR = "$%#@*&^&"
+_DEFAULT_KEY_VALUE_SEPARATOR = "><?&(^#"
 
 
 class Store:
     """The actual representation of the data store"""
-    _token_separator = "$%#@*&^&"
-    _key_value_separator = "><?&(^#"
+    _token_separator = _DEFAULT_TOKEN_SEPARATOR
+    _key_value_separator = _DEFAULT_KEY_VALUE_SEPARATOR
     __index_filename = "index.idx"
     __del_filename = "delete.del"
 
@@ -142,21 +147,34 @@ class Store:
         :param key:
         :param value:
         """
-        self._memtable[key] = value
+        if key >= self._current_log_file:
+            self._memtable[key] = value
+            self.__persist_memtable_to_disk()
 
-        with open(self.__log_file_path, "a") as f:
-            f.write(f"{key}{self._key_value_separator}{value}{self._token_separator}")
+        elif self._cache.is_in_range(key):
+            self._cache.update(key, value)
+            self.__persist_cache_to_disk()
+
+        else:
+            timestamp_range = self.__get_timestamp_range_for_key(key)
+            if timestamp_range is None:
+                raise CorruptedDataError()
+
+            self.__load_cache_for_timestamp_range(timestamp_range)
+            self._cache.update(key, value)
+            self.__persist_cache_to_disk()
 
     def __delete_key_value_pair(self, key: str):
         """
         Removes the given key value pair for the given key in memtable and in the log file
         :param key: the timestamped key to delete
         """
-        value = self._memtable.pop(key, None)
-        if value is None:
-            return
-
-        self.__delete_key_values_from_file(path=self.__log_file_path, keys=[key])
+        if self._cache.is_in_range(key):
+            self._cache.remove(key)
+            self.__persist_cache_to_disk()
+        elif key >= self._current_log_file:
+            self._memtable.pop(key)
+            self.__persist_memtable_to_disk()
 
     def __get_keys_to_delete(self) -> List[str]:
         """
@@ -325,6 +343,57 @@ class Store:
             key_timestamped_key_pair = f"{key}{self._key_value_separator}{timestamped_key}{self._token_separator}"
             f.write(content.replace(key_timestamped_key_pair, ""))
 
+    def __persist_memtable_to_disk(self):
+        """Persists the current memtable to disk"""
+        self.__persist_data_to_file(data=self._memtable, filename=f"{self._current_log_file}.log")
+
+    def __persist_cache_to_disk(self):
+        """Persists the current cache to disk"""
+        self.__persist_data_to_file(data=self._cache.data, filename=f"{self._cache.start}.cky")
+
+    def __persist_data_to_file(self, data: Dict[str, str], filename: str):
+        """
+        Persists the given data into the file within the database folder,
+        overwriting the older data
+
+        :param data: the new data
+        :param filename: the name of the file within the database folder
+        """
+        content = ""
+        data_file_path = os.path.join(self.__db_path, filename)
+
+        for key, value in data.items():
+            content += f"{key}{self._key_value_separator}{value}{self._token_separator}"
+
+        with open(data_file_path, "w") as f:
+            f.write(content)
+
+    def __get_timestamp_range_for_key(self, key: str) -> Optional[Tuple[str, str]]:
+        """
+        Returns the range of timestamps within which the given key falls.
+        This range corresponds to the data_files and the log_file names which are actually timestamps
+        :param key:
+        :return:
+        """
+        timestamps = sorted([*self._data_files, self._current_log_file])
+
+        for i, timestamp in enumerate(timestamps):
+            if timestamp > key and i > 0:
+                return timestamps[i - 1], timestamp
+
+        return None
+
+    def __load_cache_for_timestamp_range(self, timestamp_range: Tuple[str, str]):
+        """
+        Loads the _cache for the given timestamp range where the lower limit of the range
+        is the name of the data file whose data is to be loaded into the disk.
+        The upper limit is used to just update the cache's end property
+
+        :param timestamp_range:
+        """
+        data = self.__get_key_value_pairs_from_file(f"{timestamp_range[0]}.cky")
+        self._cache = Cache(data=data, start=timestamp_range[0], end=timestamp_range[1])
+
     def __update_sorted_data_files_list(self):
         """
         Updates the sorted data_files list property from the
@@ -359,10 +428,13 @@ class Cache:
     The cache holding the latest data for the given time range
     """
 
-    def __init__(self, data=None, start: str = "0", stop: str = "0"):
+    def __init__(self,
+                 data=None,
+                 start: str = "0",
+                 end: str = "0"):
         self.__data = {} if data is None else data
-        self.__start = int(start)
-        self.__stop = int(stop)
+        self.__start = start
+        self.__end = end
 
     def is_in_range(self, timestamp: str) -> bool:
         """
@@ -370,10 +442,38 @@ class Cache:
         :param timestamp:
         :return: whether it is in range or not
         """
-        pass
+        return self.__start <= timestamp <= self.__end
+
+    def update(self, key: str, value: str):
+        """
+        Update the given key with the given value in the cache
+        :param key: the key to be updated
+        :param value: the new value for th key
+        """
+        self.__data[key] = value
+
+    def remove(self, key: str):
+        """
+        Removes the given key from the cache
+        :param key:
+        """
+        self.__data.pop(key)
+
+    @property
+    def data(self):
+        return self.__data
+
+    @property
+    def start(self):
+        return self.__start
+
+    @property
+    def end(self):
+        return self.__end
 
     def __eq__(self, other) -> bool:
         return (
                 self.__data == other.__data
-                and self.__stop == other.__stop
-                and self.__start == other.__start)
+                and self.__end == other.__end
+                and self.__start == other.__start
+        )

@@ -66,10 +66,23 @@ npm install ckydb
 
 - On `ckydb.set(key, value)`:
     - the corresponding TIMESTAMPED key is searched for in the index
-    - if the key does not exist, a new TIMESTAMPED key is created and added to the index with its user-defined key
-    - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
-    - this TIMESTAMPED key and its value are then added to `memtable`.
-    - this TIMESTAMPED key and its value are then added to the current log file (".log")
+    - if the key does not exist:
+        - a new TIMESTAMPED key is created and added to the index with its user-defined key
+        - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
+        - this TIMESTAMPED key and its value are then added to `memtable`.
+        - this TIMESTAMPED key and its value are then added to the current log file (".log")
+    - if the key exists:
+        - its timestamp is extracted and compared to the current_log file to see if it is later than the current_log
+          file
+        - if it is later or equal, `memtable` and the current log file are updated
+        - else the timestamp is compared to cache's "start" and "stop" to see if it lies within the cache
+        - if it exists in the cache, then the cache data and its corresponding data file are updated
+        - else, the data file in which the timestamp exists is located within the data_files. This is done by finding
+          the two data files between which the timestamp exists when the list is sorted in ascending order. The file to
+          the left is the one containing the timestamp.
+            - the key-values from the data file are then extracted and they new key-value inserted
+            - the new data is then loaded into the cache
+            - the new data is also loaded into the data file
     - If any error occurs on any of these steps, the preceding steps are reversed and the error returned/raised/thrown
       in the call
 
@@ -113,15 +126,14 @@ npm install ckydb
 goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pig[><?&(^#]1655304770534578-pig{&*/%}fish[><?&(^#]1655303775538278-fish$%#@*&^&
 ```
 
-- The file format of the ".del" files is just "TIMESTAMPED-key<token>" separated by a
-  unique token e.g. "{&*/%}"
+- The file format of the ".del" files is just "TIMESTAMPED-key<token>" separated by a unique token e.g. "{&*/%}"
 
 ```
 1655304770518678-goat{&*/%}1655304670510698-hen{&*/%}1655304770534578-pig{&*/%}1655303775538278-fish$%#@*&^&
 ```
 
-- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key<key_value_separator>value<token>" separated by a unique token
-  e.g. "{&*/%}" and a key_value_separator like "[><?&(^#]"
+- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key<key_value_separator>value<token>" separated
+  by a unique token e.g. "{&*/%}" and a key_value_separator like "[><?&(^#]"
 
 ```
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
