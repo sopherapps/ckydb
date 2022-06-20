@@ -35,16 +35,16 @@ class TestStore(unittest.TestCase):
         expected_index = {
             "cow": "1655375120328185000-cow",
             "dog": "1655375120328185100-dog",
-            "goat": "1655304770518678-goat",
-            "hen": "1655304670510698-hen",
-            "pig": "1655304770534578-pig",
-            "fish": "1655303775538278-fish",
+            "goat": "1655404770518678-goat",
+            "hen": "1655404670510698-hen",
+            "pig": "1655404770534578-pig",
+            "fish": "1655403775538278-fish",
         }
         expected_memtable = {
-            "1655304770518678-goat": "678 months",
-            "1655304670510698-hen": "567 months",
-            "1655304770534578-pig": "70 months",
-            "1655303775538278-fish": "8990 months",
+            "1655404770518678-goat": "678 months",
+            "1655404670510698-hen": "567 months",
+            "1655404770534578-pig": "70 months",
+            "1655403775538278-fish": "8990 months",
         }
         expected_data_files = [file.rstrip(".cky") for file in self.data_files]
         expected_current_log_file = self.log_filename.rstrip(".log")
@@ -156,8 +156,14 @@ class TestStore(unittest.TestCase):
 
     def test_get_recent_key(self):
         """get should return value directly from memtable for recent key, no update to cache"""
-        # to test, one can delete the log file first
-        pass
+        key, expected_value = "fish", "8990 months"
+
+        self.__add_dummy_db_data()
+        self.store.load()
+        # remove the database files to show data is got straight from memory
+        self.__clear_dummy_db_data()
+
+        self.assertEqual(expected_value, self.store.get(key))
 
     def test_get_old_key(self):
         """get of old key should update cache with all data from selected old data file,

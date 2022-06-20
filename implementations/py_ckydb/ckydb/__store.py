@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
-from ckydb.__exc import CorruptedDataError
+from ckydb.__exc import CorruptedDataError, NotFoundError
 
 _DEFAULT_TOKEN_SEPARATOR = "$%#@*&^&"
 _DEFAULT_KEY_VALUE_SEPARATOR = "><?&(^#"
@@ -84,7 +84,18 @@ class Store:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        pass
+        if self.__should_sanitize:
+            k, _ = self.__sanitize_key_value_pair(key=k, value="")
+
+        timestamped_key = self._index.get(k, None)
+        if timestamped_key is None:
+            raise NotFoundError()
+
+        value = self.__get_value_for_key(timestamped_key)
+        if value is None:
+            raise CorruptedDataError()
+
+        return value
 
     def delete(self, k: str):
         """
@@ -393,6 +404,24 @@ class Store:
         """
         data = self.__get_key_value_pairs_from_file(f"{timestamp_range[0]}.cky")
         self._cache = Cache(data=data, start=timestamp_range[0], end=timestamp_range[1])
+
+    def __get_value_for_key(self, timestamped_key: str) -> Optional[str]:
+        """
+        Returns the value for the given key. It will return None if value is not found
+        :param timestamped_key:
+        :return: (Optional[str]) the value for the given key
+        """
+        if timestamped_key >= self._current_log_file:
+            return self._memtable.get(timestamped_key, None)
+        elif self._cache.is_in_range(timestamped_key):
+            return self._cache.data.get(timestamped_key, None)
+        else:
+            timestamp_range = self.__get_timestamp_range_for_key(timestamped_key)
+            if timestamp_range is None:
+                return None
+
+            self.__load_cache_for_timestamp_range(timestamp_range)
+            return self._cache.data.get(timestamped_key, None)
 
     def __update_sorted_data_files_list(self):
         """
