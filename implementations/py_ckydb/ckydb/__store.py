@@ -105,7 +105,7 @@ class Store:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        pass
+        self.__mark_key_for_deletion(k)
 
     def clear(self):
         """
@@ -132,6 +132,9 @@ class Store:
 
             path = os.path.join(self.__db_path, file)
             self.__delete_key_values_from_file(path, keys_to_delete)
+
+        with open(self.__del_file_path, "w") as f:
+            pass
 
     def __delete_key_values_from_file(self, path: str, keys: List[str]):
         """
@@ -266,16 +269,6 @@ class Store:
 
         key_value_pairs = content.rstrip(self._token_separator).split(self._token_separator)
         return dict(kv.split(self._key_value_separator) for kv in key_value_pairs)
-
-    def __load_cache_from_disk(self, data_file: str, start: str, stop: str):
-        """
-        Loads the cache from the data file .cky file, plus the start and stop
-
-        :param data_file: - the data file name to load into cache
-        :param start: - the start timestamp for the cache
-        :param stop: - the stop timestamp for the cache
-        """
-        pass
 
     def __load_file_props_from_disk(self):
         """
@@ -436,8 +429,16 @@ class Store:
         and removes it from the ".idx" file
         and appends it to the ".del" file
         :param key: - the key to be marked for deletion
+        :raises NotFoundError: if key is not in index
         """
-        pass
+        timestamped_key = self._index.pop(key, None)
+        if timestamped_key is None:
+            raise NotFoundError()
+
+        self.__persist_data_to_file(self._index, self.__index_filename)
+
+        with open(self.__del_file_path, "a") as f:
+            f.write(f"{timestamped_key}{self._token_separator}")
 
     @property
     def __index_file_path(self):

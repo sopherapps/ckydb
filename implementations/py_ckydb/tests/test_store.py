@@ -198,20 +198,39 @@ class TestStore(unittest.TestCase):
         self.assertEqual(expected_value, value)
 
     def test_delete(self):
-        """delete should remove key-value from index and log file;
+        """delete should remove key-value from index;
         transfer key-timestamped_key from index (and .idx file) to .del file"""
-        pass
+        key = "pig"
+        expected_idx_file_content = "cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&"
+        expected_del_file_content = "1655404770534578-pig$%#@*&^&"
+        idx_file_path = os.path.join(db_folder, self.index_filename)
+        del_file_path = os.path.join(db_folder, self.del_filename)
+        expected_index = {
+            "cow": "1655375120328185000-cow",
+            "dog": "1655375120328185100-dog",
+            "goat": "1655404770518678-goat",
+            "hen": "1655404670510698-hen",
+            "fish": "1655403775538278-fish",
+        }
 
-    def test_delete_old_key(self):
-        """delete should remove key-value from index and data (.cky) file;
-        transfer key-timestamped_key from index (and .idx file) to .del file"""
-        pass
+        self.__add_dummy_db_data()
+        self.store.load()
+        self.store.delete(key)
+        idx_file_content = self.__read_to_str(idx_file_path)
+        del_file_content = self.__read_to_str(del_file_path)
+
+        self.assertEqual(expected_del_file_content, del_file_content)
+        self.assertEqual(expected_idx_file_content, idx_file_content)
+        self.assertDictEqual(expected_index, self.store._index)
+        self.assertRaises(ckydb.exc.NotFoundError, self.store.get, key)
 
     def test_vacuum(self):
         """vacuum should delete all marked-for-delete key-values from .cky and .log files"""
-        expected_log_file_content = "1655304770518678-goat><?&(^#678 months$%#@*&^&1655304670510698-hen><?&(^#567 months$%#@*&^&1655304770534578-pig><?&(^#70 months$%#@*&^&1655303775538278-fish><?&(^#8990 months$%#@*&^&"
+        expected_log_file_content = "1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&"
         expected_data_file_content = [
             "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", ""]
+        expected_del_file_content = ""
+        del_file_path = os.path.join(db_folder, self.del_filename)
         log_file_path = os.path.join(db_folder, self.log_filename)
         data_file_paths = [os.path.join(db_folder, file) for file in self.data_files]
 
@@ -219,8 +238,10 @@ class TestStore(unittest.TestCase):
         self.store.vacuum()
         data_file_content = [self.__read_to_str(data_file_path) for data_file_path in data_file_paths]
         log_file_content = self.__read_to_str(log_file_path)
+        del_file_content = self.__read_to_str(del_file_path)
 
         self.assertEqual(expected_log_file_content, log_file_content)
+        self.assertEqual(expected_del_file_content, del_file_content)
         self.assertListEqual(expected_data_file_content, data_file_content)
 
     def test_should_sanitize_true(self):

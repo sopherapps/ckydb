@@ -140,7 +140,7 @@ python main.py
 - On `ckydb.delete(key)`:
     - Its `key: TIMESTAMPED-key` pair is removed from the in-memory index.
     - Its `key: TIMESTAMPED-key` pair is removed from the ".idx" file
-    - Its `key: TIMESTAMPED-key` is add to the ".del" file
+    - Its `key: TIMESTAMPED-key` is added to the ".del" file
     - If any error occurs on any of these steps, the preceding steps are reversed and the error returned/raised/thrown
       in the call
 
