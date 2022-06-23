@@ -14,6 +14,9 @@ class TestCkydb(unittest.TestCase):
         self.values = ["English", "English", "French", "French", "Spanish", "Portuguese", "Runyoro"]
         self.db = ckydb.Ckydb(db_folder)
 
+    def tearDown(self) -> None:
+        self.db.clear()
+
     def test_default_connect(self):
         """connect returns a Ckydb instance with all the defaults"""
         self.assertEqual(ckydb.connect(db_folder), ckydb.Ckydb(db_folder))
@@ -72,6 +75,14 @@ class TestCkydb(unittest.TestCase):
 
         for k in self.keys:
             self.assertRaises(ckydb.exc.NotFoundError, self.db.get, k)
+
+    def test_vacuum_cycles(self):
+        """vacuum should be called on the store instance every vacuum_interval_sec seconds"""
+        pass
+
+    def test_roll_log_cycles(self):
+        """roll_log should be called on the store instance when the log goes beyond the max_file_size_kb size"""
+        pass
 
 
 if __name__ == '__main__':

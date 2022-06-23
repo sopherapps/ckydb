@@ -25,7 +25,7 @@ class Ckydb:
         :param k: the key for the given value
         :param v: the value to set
         """
-        pass
+        return self.__store.set(k=k, v=v)
 
     def get(self, k: str) -> str:
         """
@@ -36,7 +36,7 @@ class Ckydb:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        pass
+        return self.__store.get(k)
 
     def delete(self, k: str):
         """
@@ -46,13 +46,13 @@ class Ckydb:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        pass
+        return self.__store.delete(k)
 
     def clear(self):
         """
         Clears all the data in the database
         """
-        pass
+        return self.__store.clear()
 
     def __start_vacuum_cycles(self, store: Store):
         """
