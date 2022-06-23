@@ -22,17 +22,9 @@ class TestCkydb(unittest.TestCase):
         """connect returns a Ckydb instance with all the passed custom options"""
         max_file_size_kb = 80000
         vacuum_interval_sec = 9000
-        should_sanitize = True
 
-        got = ckydb.connect(
-            db_folder, max_file_size_kb=max_file_size_kb,
-            vacuum_interval_sec=vacuum_interval_sec,
-            should_sanitize=should_sanitize)
-
-        expected = ckydb.Ckydb(
-            db_folder, max_file_size_kb=max_file_size_kb,
-            vacuum_interval_sec=vacuum_interval_sec,
-            should_sanitize=should_sanitize)
+        got = ckydb.connect(db_folder, max_file_size_kb=max_file_size_kb, vacuum_interval_sec=vacuum_interval_sec)
+        expected = ckydb.Ckydb(db_folder, max_file_size_kb=max_file_size_kb, vacuum_interval_sec=vacuum_interval_sec)
 
         self.assertEqual(got, expected)
 

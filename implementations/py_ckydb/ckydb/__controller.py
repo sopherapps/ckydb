@@ -11,15 +11,10 @@ class Ckydb:
     If db_path passed is not accessible, it will throw an error.
     """
 
-    def __init__(self,
-                 db_path: str,
-                 max_file_size_kb=(4 * 1024),
-                 vacuum_interval_sec=(5 * 60),
-                 should_sanitize=False):
+    def __init__(self, db_path: str, max_file_size_kb=(4 * 1024), vacuum_interval_sec=(5 * 60)):
+        self.__max_file_size_kb = max_file_size_kb
         self.__vacuum_interval_sec = vacuum_interval_sec
-        self.__store = Store(db_path=db_path,
-                             max_file_size_kb=max_file_size_kb,
-                             should_sanitize=should_sanitize)
+        self.__store = Store(db_path=db_path)
         self.__store.load()
         self.__start_vacuum_cycles(store=self.__store)
 
@@ -77,4 +72,8 @@ class Ckydb:
         self.__stop_vacuum_cycles()
 
     def __eq__(self, other) -> bool:
-        return self.__store == other.__store and self.__vacuum_interval_sec == other.__vacuum_interval_sec
+        return (
+                self.__store == other.__store
+                and self.__vacuum_interval_sec == other.__vacuum_interval_sec
+                and self.__max_file_size_kb == other.__max_file_size_kb
+        )

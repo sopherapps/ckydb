@@ -29,10 +29,7 @@ if __name__ == '__main__':
 
     keys = ["hey", "hi", "salut", "bonjour", "hola", "oi", "mulimuta"]
     values = ["English", "English", "French", "French", "Spanish", "Portuguese", "Runyoro"]
-    db = ckydb.connect("db",
-                       max_file_size_kb=(4 * 1024),
-                       vacuum_interval_sec=(5 * 60),
-                       should_sanitize=False)
+    db = ckydb.connect("db", max_file_size_kb=(4 * 1024), vacuum_interval_sec=(5 * 60))
 
     # setting the keys
     for k, v in zip(keys, values):
@@ -109,9 +106,6 @@ python main.py
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
-- It is possible for ckydb to be configured to sanitize all keys and values to replace any potential occurrences of the
-  token used to separate the key-value pairs on file. This avoids weird DataCorruptionError's. By default, this is
-  turned off as it impacts performance heavily.
 
 ### Operations
 

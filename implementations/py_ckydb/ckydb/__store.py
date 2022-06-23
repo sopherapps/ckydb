@@ -20,10 +20,8 @@ class Store:
     __index_filename = "index.idx"
     __del_filename = "delete.del"
 
-    def __init__(self, db_path: str, max_file_size_kb: int, should_sanitize: bool):
+    def __init__(self, db_path: str):
         self.__db_path = db_path
-        self.__max_file_size_kb = max_file_size_kb
-        self.__should_sanitize = should_sanitize
 
         # defaults
         self._cache: Cache = Cache()
@@ -34,8 +32,6 @@ class Store:
 
     def __eq__(self, other) -> bool:
         return (self.__db_path == other.__db_path
-                and self.__max_file_size_kb == other.__max_file_size_kb
-                and self.__should_sanitize == other.__should_sanitize
                 and self._memtable == other._memtable
                 and self._cache == other._cache
                 and self._index == other._index
@@ -66,9 +62,6 @@ class Store:
         timestamped_key = None
 
         try:
-            if self.__should_sanitize:
-                k, v = self.__sanitize_key_value_pair(key=k, value=v)
-
             timestamped_key = self.__get_timestamped_key(k)
             self.__save_key_value_pair(key=timestamped_key, value=v)
         except Exception:
@@ -84,9 +77,6 @@ class Store:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        if self.__should_sanitize:
-            k, _ = self.__sanitize_key_value_pair(key=k, value="")
-
         timestamped_key = self._index.get(k, None)
         if timestamped_key is None:
             raise NotFoundError()
@@ -293,28 +283,6 @@ class Store:
         """
         shutil.rmtree(self.__db_path, ignore_errors=True)
 
-    def __sanitize_key_value_pair(self, key: str, value: str) -> Tuple[str, str]:
-        """
-        Escapes `token_separator` instances in
-        the key and value pair and returns the pair
-
-        :param key: - the unsanitized key
-        :param value: - the unsanitized value
-        :return: (str, str) - the sanitized (key, value) pair
-        """
-        pass
-
-    def __desanitize_key_value_pair(self, key: str, value: str) -> Tuple[str, str]:
-        """
-        Restores the escaped `token_separator` instances in the
-        key and value pair and returns the pair
-
-        :param key: - the sanitized key
-        :param value: - the sanitized value
-        :return: (str, str) - the unsanitized (key, value) pair
-        """
-        pass
-
     def __get_timestamped_key(self, key: str) -> str:
         """
         Gets the timestamped key from index or generates one if not exists and adds it to index file
@@ -416,13 +384,6 @@ class Store:
 
             self.__load_cache_for_timestamp_range(timestamp_range)
             return self._cache.data.get(timestamped_key, None)
-
-    def __update_sorted_data_files_list(self):
-        """
-        Updates the sorted data_files list property from the
-        list of ".cky" files in the database on disk
-        """
-        pass
 
     def __mark_key_for_deletion(self, key: str):
         """

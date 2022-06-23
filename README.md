@@ -58,9 +58,6 @@ npm install ckydb
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
-- It is possible for ckydb to be configured to sanitize all keys and values to replace any potential occurrences of the
-  token used to separate the key-value pairs on file. This avoids weird DataCorruptionError's. By default, this is
-  turned off as it impacts performance heavily.
 
 ### Operations
 

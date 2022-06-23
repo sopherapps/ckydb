@@ -16,7 +16,7 @@ class TestStore(unittest.TestCase):
 
     def setUp(self) -> None:
         """initialize some common variables"""
-        self.store = ckydb.Store(db_folder, max_file_size_kb=1, should_sanitize=False)
+        self.store = ckydb.Store(db_folder)
         self.log_filename = "1655375171402014000.log"
         self.index_filename = "index.idx"
         self.del_filename = "delete.del"
@@ -243,23 +243,6 @@ class TestStore(unittest.TestCase):
         self.assertEqual(expected_log_file_content, log_file_content)
         self.assertEqual(expected_del_file_content, del_file_content)
         self.assertListEqual(expected_data_file_content, data_file_content)
-
-    def test_should_sanitize_true(self):
-        """should sanitize key and value in .log file;
-         return unsanitized key-value on get and delete key-value given unsanitized key"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        store = ckydb.Store(db_path=db_folder, max_file_size_kb=1, should_sanitize=True)
-        token = store._token_separator
-        key_value_separator = store._key_value_separator
-        key, value = f"{now}-{key_value_separator}", f"{token}_foo"
-
-        self.__add_dummy_db_data()
-        store.load()
-        store.set(k=key, v=value)
-
-        self.assertEqual(value, store.get(key))
-        store.delete(key)
-        self.assertRaises(ckydb.exc.NotFoundError, store.get)
 
     def test_roll_log(self):
         """should transform .log file to .cky and create new log file"""
