@@ -29,58 +29,82 @@ if __name__ == '__main__':
 
     keys = ["hey", "hi", "salut", "bonjour", "hola", "oi", "mulimuta"]
     values = ["English", "English", "French", "French", "Spanish", "Portuguese", "Runyoro"]
-    db = ckydb.connect("db", max_file_size_kb=(4 * 1024), vacuum_interval_sec=(5 * 60))
-
-    # setting the keys
-    for k, v in zip(keys, values):
-        db.set(k, v)
-
-    for i, k in enumerate(keys):
-        assert values[i] == db.get(k)
-
-    # updating keys
-    new_values = ["Jane", "John", "Jean", "Marie", "Santos", "Ronaldo", "Aliguma"]
-    for k, v in zip(keys, new_values):
-        db.set(k, v)
-
-    for i, k in enumerate(keys):
-        assert new_values[i] == db.get(k)
-
-    # deleting the keys
-    for k in keys[:2]:
-        db.delete(k)
-
-    for k, v in zip(keys[2:], new_values[2:]):
-        assert v == db.get(k)
-
-    errors = []
-
-    for k in keys[:2]:
-        try:
-            v = db.get(k)
-        except ckydb.exc.NotFoundError as exc:
-            errors.append(exc)
-
-    assert len(errors) == len(keys[:2])
-
-    # clear the database
-    errors.clear()
-    db.clear()
-
-    for k in keys:
-        try:
-            v = db.get(k)
-        except ckydb.exc.NotFoundError as exc:
-            errors.append(exc)
-
-    assert len(errors) == len(keys)
-
+    with ckydb.connect("db", max_file_size_kb=(4 * 1024), vacuum_interval_sec=(5 * 60)) as db:
+        # setting the keys
+        for k, v in zip(keys, values):
+            db.set(k, v)
+    
+        for i, k in enumerate(keys):
+            assert values[i] == db.get(k)
+    
+        # updating keys
+        new_values = ["Jane", "John", "Jean", "Marie", "Santos", "Ronaldo", "Aliguma"]
+        for k, v in zip(keys, new_values):
+            db.set(k, v)
+    
+        for i, k in enumerate(keys):
+            assert new_values[i] == db.get(k)
+    
+        # deleting the keys
+        for k in keys[:2]:
+            db.delete(k)
+    
+        for k, v in zip(keys[2:], new_values[2:]):
+            assert v == db.get(k)
+    
+        errors = []
+    
+        for k in keys[:2]:
+            try:
+                v = db.get(k)
+            except ckydb.exc.NotFoundError as exc:
+                errors.append(exc)
+    
+        assert len(errors) == len(keys[:2])
+    
+        # clear the database
+        errors.clear()
+        db.clear()
+    
+        for k in keys:
+            try:
+                v = db.get(k)
+            except ckydb.exc.NotFoundError as exc:
+                errors.append(exc)
+    
+        assert len(errors) == len(keys)
 ```
 
 - Run the `main.py` module and observe the terminal
 
 ```shell
 python main.py
+```
+
+## How to Run Tests
+
+- Clone the repo
+
+```shell
+git clone git@github.com:sopherapps/ckydb.git
+```
+
+- Enter the python implementation folder
+
+```shell
+cd ckydb/implementations/py_ckydb
+```
+
+- Create and activate the python 3.7+ virtual environment
+
+```shell
+python3 -m venv env
+source env/bin/activate
+```
+- Run the test command
+
+```shell
+python -m unittest
 ```
 
 ## Under the Hood
@@ -116,6 +140,8 @@ python main.py
         - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
         - this TIMESTAMPED key and its value are then added to `memtable`.
         - this TIMESTAMPED key and its value are then added to the current log file (".log")
+        - A check is made on the size of the log file. If the log file is bigger than the max size allowed,
+          it is rolled into a .cky file and a new log file created, and the `memtable` refreshed.
     - if the key exists:
         - its timestamp is extracted and compared to the current_log file to see if it is later than the current_log
           file
@@ -187,14 +213,6 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 **Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
 weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
-### Options for Scheduled Operations
- - Replace the scheduled ops with ops that occur when new key is added (to change log file). this will slow down
-each set even further because one has to keep track of size of file as well as on delete, one has to search through the
-keys to find which to delete.
- - Add event loop in the controller that keeps track of time of vacuuming and also keeps checking for size of 
-the log file.- Event loop is a little hard to implement in python without including extra complicated code. We could try asyncio
-   (https://docs.python.org/3/library/asyncio.html)
- - 
 ## Acknowledgments
 
 - We can do nothing without God (John 15: 5). Glory be to Him.

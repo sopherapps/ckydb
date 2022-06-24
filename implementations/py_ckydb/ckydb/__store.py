@@ -20,8 +20,9 @@ class Store:
     __index_filename = "index.idx"
     __del_filename = "delete.del"
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, max_file_size_kb=(4 * 1024)):
         self.__db_path = db_path
+        self.__max_file_size_kb = max_file_size_kb
 
         # defaults
         self._cache: Cache = Cache()
@@ -37,6 +38,7 @@ class Store:
                 and self._index == other._index
                 and self._data_files == other._data_files
                 and self._current_log_file == other._current_log_file
+                and self.__max_file_size_kb == other.__max_file_size_kb
                 )
 
     def load(self):
@@ -126,20 +128,6 @@ class Store:
         with open(self.__del_file_path, "w") as f:
             pass
 
-    def roll_log(self):
-        """
-        Rolls the log file, converting it into a .cky file and creating a new .log file
-        """
-        os.rename(self.__log_file_path, self.__log_file_path.replace(".log", ".cky"))
-        self._memtable = {}
-        self._data_files.append(self._current_log_file)
-        self.__create_log_file()
-
-    @property
-    def log_file_size(self):
-        """The log file in kilobytes"""
-        return os.path.getsize(self.__log_file_path) / 1024
-
     def __delete_key_values_from_file(self, path: str, keys: List[str]):
         """
         Deletes the key-value pairs in the file at `path` for the given keys
@@ -168,6 +156,7 @@ class Store:
         if key >= self._current_log_file:
             self._memtable[key] = value
             self.__persist_memtable_to_disk()
+            self.__roll_log_file_if_too_big()
 
         elif self._cache.is_in_range(key):
             self._cache.update(key, value)
@@ -410,6 +399,14 @@ class Store:
         with open(self.__del_file_path, "a") as f:
             f.write(f"{timestamped_key}{self._token_separator}")
 
+    def __roll_log_file_if_too_big(self):
+        """Rolls the current log file in case its size has exceeded the max file size in kilobytes"""
+        if self.__log_file_size >= self.__max_file_size_kb:
+            os.rename(self.__log_file_path, self.__log_file_path.replace(".log", ".cky"))
+            self._memtable = {}
+            self._data_files.append(self._current_log_file)
+            self.__create_log_file()
+
     @property
     def __index_file_path(self):
         return os.path.join(self.__db_path, self.__index_filename)
@@ -421,6 +418,11 @@ class Store:
     @property
     def __log_file_path(self):
         return os.path.join(self.__db_path, f"{self._current_log_file}.log")
+
+    @property
+    def __log_file_size(self):
+        """The log file in kilobytes"""
+        return os.path.getsize(self.__log_file_path) / 1024
 
 
 class Cache:

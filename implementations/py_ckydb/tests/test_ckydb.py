@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import unittest
 
@@ -13,12 +14,12 @@ class TestCkydb(unittest.TestCase):
     def setUp(self) -> None:
         self.keys = ["hey", "hi", "salut", "bonjour", "hola", "oi", "mulimuta"]
         self.values = ["English", "English", "French", "French", "Spanish", "Portuguese", "Runyoro"]
-        self.db = ckydb.Ckydb(db_folder, vacuum_interval_sec=2)
+        self.db = ckydb.Ckydb(db_folder, vacuum_interval_sec=2, max_file_size_kb=(320 / 1024))
         self.db.start()
 
     def tearDown(self) -> None:
-        self.db.clear()
         self.db.close()
+        self.__clear_dummy_db_data()
 
     def test_default_connect(self):
         """connect returns a Ckydb instance with all the defaults"""
@@ -86,7 +87,7 @@ class TestCkydb(unittest.TestCase):
 
     def test_vacuum_cycles(self):
         """vacuum should be called on the store instance every vacuum_interval_sec seconds"""
-        for k, v in zip(self.keys, self.values):
+        for k, v in zip(self.keys[:2], self.values):
             self.db.set(k, v)
 
         key_to_delete = self.keys[1]
@@ -107,18 +108,36 @@ class TestCkydb(unittest.TestCase):
         self.assertNotIn(key_to_delete, got_del_content_post_vacuum)
         self.assertNotIn(key_to_delete, got_log_content_post_vacuum)
 
-    def test_roll_log_cycles(self):
+    def test_roll_log(self):
         """roll_log should be called on the store instance when the log goes beyond the max_file_size_kb size"""
-        # copy data that exceeds the given limit into the log file and wait for a minute
-        # check that a new .cky file has been created and an empty .log file has also been created
-        # copy little data this time and check to see that no new file was created
-        # copy big data again into the log file and check to see that a new .cky file has been created, as
-        # well as a new .log file
-        pass
+        key_sets = [[f"{key}-{index}" for key in self.keys] for index in range(0, 3)]
+
+        for key_set in key_sets:
+            for k, v in zip(key_set, self.values):
+                self.db.set(k, v)
+
+        for k, v in zip(self.keys[:2], self.values):
+            self.db.set(k, v)
+
+        cky_file_content_post_roll = [self.__read_to_str(file) for file in self._data_filenames]
+        log_content_post_roll = self.__read_to_str(self._log_filename)
+        cky_file_content_post_roll.sort()
+
+        self.assertEqual(len(key_sets), len(cky_file_content_post_roll))
+        for key_set, cky_file_content in zip(key_sets, cky_file_content_post_roll):
+            for key in key_set:
+                self.assertIn(key, cky_file_content)
+
+        for k in self.keys[:2]:
+            self.assertIn(k, log_content_post_roll)
 
     @property
     def _log_filename(self):
         return [file for file in os.listdir(db_folder) if file.endswith(".log")][0]
+
+    @property
+    def _data_filenames(self):
+        return [file for file in os.listdir(db_folder) if file.endswith(".cky")]
 
     @staticmethod
     def __read_to_str(file_name: str) -> str:
@@ -126,6 +145,11 @@ class TestCkydb(unittest.TestCase):
         file_path = os.path.join(db_folder, file_name)
         with open(file_path) as file:
             return "\n".join(file.readlines())
+
+    @staticmethod
+    def __clear_dummy_db_data():
+        """Removes all dummy db data found in the current database's folder"""
+        shutil.rmtree(db_folder, ignore_errors=True)
 
 
 if __name__ == '__main__':

@@ -268,19 +268,19 @@ class TestStore(unittest.TestCase):
         self.assertEqual(expected_del_file_content, del_file_content)
         self.assertListEqual(expected_data_file_content, data_file_content)
 
-    def test_roll_log(self):
-        """should transform .log file to .cky and create new log file"""
-        expected_memtable = {}
-        expected_data_files = [file.rstrip(".cky") for file in self.data_files]
-        expected_data_files.append(self.log_filename.rstrip(".log"))
-
-        self.__add_dummy_db_data()
-        self.store.load()
-        self.store.roll_log()
-
-        self.assertDictEqual(expected_memtable, self.store._memtable)
-        self.assertListEqual(expected_data_files, self.store._data_files)
-        self.assertGreater(self.store._current_log_file, self.log_filename)
+    # def test_roll_log(self):
+    #     """should transform .log file to .cky and create new log file"""
+    #     expected_memtable = {}
+    #     expected_data_files = [file.rstrip(".cky") for file in self.data_files]
+    #     expected_data_files.append(self.log_filename.rstrip(".log"))
+    #
+    #     self.__add_dummy_db_data()
+    #     self.store.load()
+    #     self.store.roll_log()
+    #
+    #     self.assertDictEqual(expected_memtable, self.store._memtable)
+    #     self.assertListEqual(expected_data_files, self.store._data_files)
+    #     self.assertGreater(self.store._current_log_file, self.log_filename)
 
     @staticmethod
     def __add_dummy_db_data():

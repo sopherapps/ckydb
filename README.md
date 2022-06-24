@@ -68,6 +68,8 @@ npm install ckydb
         - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
         - this TIMESTAMPED key and its value are then added to `memtable`.
         - this TIMESTAMPED key and its value are then added to the current log file (".log")
+        - A check is made on the size of the log file. If the log file is bigger than the max size allowed,
+          it is rolled into a .cky file and a new log file created, and the `memtable` refreshed.
     - if the key exists:
         - its timestamp is extracted and compared to the current_log file to see if it is later than the current_log
           file
