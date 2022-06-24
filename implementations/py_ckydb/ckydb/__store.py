@@ -203,6 +203,9 @@ class Store:
         with open(del_file_path) as f:
             content = "\n".join(f.readlines())
 
+        if content == "":
+            return []
+
         return content.rstrip(self._token_separator).split(self._token_separator)
 
     def __create_log_file(self):

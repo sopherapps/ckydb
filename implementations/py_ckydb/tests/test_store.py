@@ -244,6 +244,30 @@ class TestStore(unittest.TestCase):
         self.assertEqual(expected_del_file_content, del_file_content)
         self.assertListEqual(expected_data_file_content, data_file_content)
 
+    def test_vacuum_no_keys_to_delete(self):
+        """vacuum should do nothing if .del is empty"""
+        expected_log_file_content = "1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&"
+        expected_data_file_content = [
+            "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", "1655375171402014000-bar><?&(^#foo$%#@*&^&"]
+        expected_del_file_content = ""
+        del_file_path = os.path.join(db_folder, self.del_filename)
+        log_file_path = os.path.join(db_folder, self.log_filename)
+        data_file_paths = [os.path.join(db_folder, file) for file in self.data_files]
+
+        self.__add_dummy_db_data()
+        # clear data in del_file
+        with open(del_file_path, "w"):
+            pass
+
+        self.store.vacuum()
+        data_file_content = [self.__read_to_str(data_file_path) for data_file_path in data_file_paths]
+        log_file_content = self.__read_to_str(log_file_path)
+        del_file_content = self.__read_to_str(del_file_path)
+
+        self.assertEqual(expected_log_file_content, log_file_content)
+        self.assertEqual(expected_del_file_content, del_file_content)
+        self.assertListEqual(expected_data_file_content, data_file_content)
+
     def test_roll_log(self):
         """should transform .log file to .cky and create new log file"""
         expected_memtable = {}
