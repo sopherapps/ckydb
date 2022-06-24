@@ -135,6 +135,11 @@ class Store:
         self._data_files.append(self._current_log_file)
         self.__create_log_file()
 
+    @property
+    def log_file_size(self):
+        """The log file in kilobytes"""
+        return os.path.getsize(self.__log_file_path) / 1024
+
     def __delete_key_values_from_file(self, path: str, keys: List[str]):
         """
         Deletes the key-value pairs in the file at `path` for the given keys
