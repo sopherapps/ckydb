@@ -1,26 +1,28 @@
 # ckydb
 
-A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persist data on disk.
+A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
 
 It is read as 'skydb'
 
 ## Implementations
 
+__Note: The project is still under heavy development__.
+
 All implementations are found in this monorepo in the `implementations` folder
 
-- Python
+- Python (Completed -- public API is stable)
 
 ```shell
 pip install ckydb
 ```
 
-- Go
+- Go (Pending)
 
 ```shell
-go get github.com/sopherapps/ckydb
+go get github.com/sopherapps/ckydb/implementations/go-ckydb
 ```
 
-- Rust
+- Rust (Pending)
 
 Add the following to your `Cargo.toml` file
 
@@ -29,7 +31,7 @@ Add the following to your `Cargo.toml` file
 ckydb = { version = "0.1.0" }
 ```
 
-- Nodejs
+- Nodejs (Pending)
 
 ```shell
 npm install ckydb

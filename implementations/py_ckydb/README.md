@@ -1,6 +1,6 @@
 # ckydb
 
-A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persist data on disk.
+A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
 
 It is read as 'skydb' This the python implementation of ckydb
 
@@ -220,5 +220,5 @@ weird errors. However, the escaping is expensive and it is thus turned off by de
 
 ## License
 
-Copyright (c) 2022 [Martin Ahindura](https://github.com/tinitto). All implementations are licensed to Licensed under
+Copyright (c) 2022 [Martin Ahindura](https://github.com/tinitto). All implementations are licensed under
 the [MIT License](./LICENSE)
