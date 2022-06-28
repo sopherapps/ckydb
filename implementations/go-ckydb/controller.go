@@ -1,6 +1,11 @@
 package ckydb
 
-import "time"
+import (
+	"log"
+	"time"
+
+	"github.com/sopherapps/ckydb/implementations/go-ckydb/internal"
+)
 
 type Controller interface {
 	Open() error
@@ -13,21 +18,64 @@ type Controller interface {
 
 // Connect creates a new Ckydb instance and returns it
 func Connect(dbPath string, maxFileSizeKB float64, vacuumIntervalSec float64) (*Ckydb, error) {
-	return nil, nil
+	db, err := NewCkydb(dbPath, maxFileSizeKB, vacuumIntervalSec)
+	if err != nil {
+		return nil, err
+	}
+
+	err = db.Open()
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 type Ckydb struct {
-	tasks       []*time.Ticker
-	controlChan chan struct{}
-	dbPath      string
+	tasks             []internal.Worker
+	store             internal.Storage
+	vacuumIntervalSec float64
+}
+
+func NewCkydb(dbPath string, maxFileSizeKB float64, vacuumIntervalSec float64) (*Ckydb, error) {
+	store := internal.NewStore(dbPath, maxFileSizeKB)
+	err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	db := Ckydb{
+		tasks:             make([]internal.Worker, 0),
+		store:             store,
+		vacuumIntervalSec: vacuumIntervalSec,
+	}
+
+	return &db, nil
 }
 
 func (c *Ckydb) Open() error {
-	panic("implement me")
+	vacuumTask := internal.NewTask(time.Second*time.Duration(c.vacuumIntervalSec), func() {
+		err := c.store.Vacuum()
+		if err != nil {
+			log.Printf("error: %s", err)
+		}
+	})
+
+	c.tasks = append(c.tasks, vacuumTask)
+
+	return nil
 }
 
 func (c *Ckydb) Close() error {
-	panic("implement me")
+	for _, task := range c.tasks {
+		err := task.Stop()
+		if err != nil {
+			return err
+		}
+	}
+
+	c.tasks = nil
+	return nil
 }
 
 func (c *Ckydb) Set(key string, value string) error {

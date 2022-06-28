@@ -2,6 +2,7 @@ package ckydb
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,42 +15,52 @@ func TestCkydb(t *testing.T) {
 		key   string
 		value string
 	}
-	dbPath := "test_ckydb"
-	vacuumIntervalInSec := 2
+	dbPath, err := filepath.Abs("testControllerDb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vacuumIntervalSec := 2.0
+	maxFileSizeKB := 3.0
 
 	t.Run("ConnectShouldCallOpen", func(t *testing.T) {
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		assert.Greater(t, len(db.tasks), 0)
 	})
 
 	t.Run("OpenShouldStartAllBackgroundTasks", func(t *testing.T) {
-		db := Ckydb{dbPath: dbPath}
+		db, err := NewCkydb(dbPath, maxFileSizeKB, vacuumIntervalSec)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		err := db.Open()
+		err = db.Open()
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		assert.Greater(t, len(db.tasks), 0)
 	})
 
 	t.Run("CloseShouldStopAllBackgroundTasks", func(t *testing.T) {
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		err = db.Close()
@@ -57,10 +68,7 @@ func TestCkydb(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, len(db.tasks), 0)
-		assert.PanicsWithError(t, "closed", func() {
-			db.controlChan <- struct{}{}
-		})
+		assert.Equal(t, db.tasks, nil)
 	})
 
 	t.Run("SetNewKeyShouldAddKeyValueToStore", func(t *testing.T) {
@@ -79,6 +87,7 @@ func TestCkydb(t *testing.T) {
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		for _, record := range testRecords {
@@ -117,6 +126,7 @@ func TestCkydb(t *testing.T) {
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		for _, record := range oldRecords {
@@ -155,12 +165,13 @@ func TestCkydb(t *testing.T) {
 	})
 
 	t.Run("GetOldKeyShouldReturnValueForKeyInStore", func(t *testing.T) {
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		value, err := db.Get("foo")
@@ -172,12 +183,13 @@ func TestCkydb(t *testing.T) {
 	})
 
 	t.Run("GetSameOldKeyAgainShouldGetValueFromMemoryCache", func(t *testing.T) {
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		err = internal.ClearDummyFileDataInDb(dbPath)
@@ -195,12 +207,13 @@ func TestCkydb(t *testing.T) {
 
 	t.Run("GetNewlyInsertedKeyShouldGetValueFromMemoryMemtable", func(t *testing.T) {
 		key, value := "hello", "world"
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		err = db.Set(key, value)
@@ -227,12 +240,13 @@ func TestCkydb(t *testing.T) {
 		}
 		keysToDelete := []string{""}
 
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		for _, record := range oldRecords {
@@ -253,7 +267,7 @@ func TestCkydb(t *testing.T) {
 
 		for _, key := range keysToDelete {
 			_, err = db.Get(key)
-			assert.True(t, errors.Is(ErrNotFound, err))
+			assert.True(t, errors.Is(internal.ErrNotFound, err))
 		}
 
 		for _, record := range oldRecords {
@@ -271,12 +285,13 @@ func TestCkydb(t *testing.T) {
 			"": {key: "", value: ""},
 		}
 
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		for _, record := range oldRecords {
@@ -293,7 +308,7 @@ func TestCkydb(t *testing.T) {
 
 		for _, record := range oldRecords {
 			_, err = db.Get(record.key)
-			assert.True(t, errors.Is(ErrNotFound, err))
+			assert.True(t, errors.Is(internal.ErrNotFound, err))
 		}
 	})
 
@@ -305,12 +320,13 @@ func TestCkydb(t *testing.T) {
 		expectedLogFileContentsAfterVacuum := []string{""}
 		expectedDataFilesContentsAfterVacuum := []string{""}
 
-		db, err := connectToTestDb(dbPath)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() {
 			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
 		delFileContents, err := internal.ReadFilesWithExtension(dbPath, "del")
@@ -326,7 +342,7 @@ func TestCkydb(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		<-time.After(time.Second * time.Duration(vacuumIntervalInSec))
+		<-time.After(time.Second * time.Duration(vacuumIntervalSec))
 
 		delFileContentsAfterVacuum, err := internal.ReadFilesWithExtension(dbPath, "del")
 		if err != nil {
@@ -352,7 +368,7 @@ func TestCkydb(t *testing.T) {
 
 // connectToTestDb opens the db at the given path after
 // clearing out old data and adding in new test data
-func connectToTestDb(dbPath string) (*Ckydb, error) {
+func connectToTestDb(dbPath string, maxFileSizeKB float64, vacuumIntervalSec float64) (*Ckydb, error) {
 	err := internal.ClearDummyFileDataInDb(dbPath)
 	if err != nil {
 		return nil, err
@@ -363,5 +379,5 @@ func connectToTestDb(dbPath string) (*Ckydb, error) {
 		return nil, err
 	}
 
-	return Connect(dbPath, 6, 3)
+	return Connect(dbPath, maxFileSizeKB, vacuumIntervalSec)
 }

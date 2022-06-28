@@ -1,6 +1,6 @@
 # ckydb
 
-A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
+A simple fast memory-first thread-safe (or goroutine-safe for Go) prefix-value embedded database that persists data on disk.
 
 It is read as 'skydb' This the Golang implementation of ckydb
 
@@ -111,11 +111,11 @@ go test ./...
 
 ## Under the Hood
 
-- Every key has a TIMESTAMP prefix, added to it on creation. This TIMESTAMPED key is the one used to store data in a
+- Every prefix has a TIMESTAMP prefix, added to it on creation. This TIMESTAMPED prefix is the one used to store data in a
   sorted way for easy retrieval.
-- The actual key known by user, however, is kept in the index. When ckydb is initialized, the index is loaded into
-  memory from the index file (a ".idx" file). The index is basically a map of `key: TIMESTAMPED-key`
-- The TIMESTAMPED-key and its value are stored first in a log file (a ".log" file). This current log file has an
+- The actual prefix known by user, however, is kept in the index. When ckydb is initialized, the index is loaded into
+  memory from the index file (a ".idx" file). The index is basically a map of `prefix: TIMESTAMPED-prefix`
+- The TIMESTAMPED-prefix and its value are stored first in a log file (a ".log" file). This current log file has an
   in-memory copy we call `memtable`
 - When the current log file exceeds a predefined size (4MBs by default), it is converted to a sorted data file (a ".cky"
   file) and `memtable` refreshed and a new log file created.
@@ -127,24 +127,24 @@ go test ./...
   converted into ".cky".
 - The name of the current log (`current_log_file`) file is also kept in memory, and keysToDelete when a new log file is
   created.
-- There is also a ".del" file that holds all the `key: TIMESTAMPED-key` pairs that have been marked for deletion.
+- There is also a ".del" file that holds all the `prefix: TIMESTAMPED-prefix` pairs that have been marked for deletion.
 - At a predefined interval (5 minutes by default), a background task deletes the values from ".cky" and ".log" files
-  corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
+  corresponding to the `prefix: TIMESTAMPED-prefix` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
 
 ### Operations
 
-- On `ckydb.set(key, value)`:
-    - the corresponding TIMESTAMPED key is searched for in the index
-    - if the key does not exist:
-        - a new TIMESTAMPED key is created and added to the index with its user-defined key
-        - the user-defined key and its TIMESTAMPED key are then added to the index file (".idx")
-        - this TIMESTAMPED key and its value are then added to `memtable`.
-        - this TIMESTAMPED key and its value are then added to the current log file (".log")
+- On `ckydb.set(prefix, value)`:
+    - the corresponding TIMESTAMPED prefix is searched for in the index
+    - if the prefix does not exist:
+        - a new TIMESTAMPED prefix is created and added to the index with its user-defined prefix
+        - the user-defined prefix and its TIMESTAMPED prefix are then added to the index file (".idx")
+        - this TIMESTAMPED prefix and its value are then added to `memtable`.
+        - this TIMESTAMPED prefix and its value are then added to the current log file (".log")
         - A check is made on the size of the log file. If the log file is bigger than the max size allowed,
           it is rolled into a .cky file and a new log file created, and the `memtable` refreshed.
-    - if the key exists:
+    - if the prefix exists:
         - its timestamp is extracted and compared to the current_log file to see if it is later than the current_log
           file
         - if it is later or equal, `memtable` and the current log file are keysToDelete
@@ -153,23 +153,23 @@ go test ./...
         - else, the data file in which the timestamp exists is located within the data_files. This is done by finding
           the two data files between which the timestamp exists when the list is sorted in ascending order. The file to
           the left is the one containing the timestamp.
-            - the key-values from the data file are then extracted and they new key-value inserted
+            - the prefix-values from the data file are then extracted and they new prefix-value inserted
             - the new data is then loaded into the cache
             - the new data is also loaded into the data file
     - If any error occurs on any of these steps, the preceding steps are reversed and the error returned/raised/thrown
       in the call
 
-- On `ckydb.delete(key)`:
-    - Its `key: TIMESTAMPED-key` pair is removed from the in-memory index.
-    - Its `key: TIMESTAMPED-key` pair is removed from the ".idx" file
-    - Its `key: TIMESTAMPED-key` is added to the ".del" file
+- On `ckydb.delete(prefix)`:
+    - Its `prefix: TIMESTAMPED-prefix` pair is removed from the in-memory index.
+    - Its `prefix: TIMESTAMPED-prefix` pair is removed from the ".idx" file
+    - Its `prefix: TIMESTAMPED-prefix` is added to the ".del" file
     - If any error occurs on any of these steps, the preceding steps are reversed and the error returned/raised/thrown
       in the call
 
-- On `ckydb.get(key)`:
-    - the corresponding TIMESTAMPED key is searched for in the index
-    - if the key does not exist, a NotFoundError is thrown/raised/returned.
-    - if the key exists, its TIMESTAMP is extracted and checked if it is greater (later) than the name of the current
+- On `ckydb.get(prefix)`:
+    - the corresponding TIMESTAMPED prefix is searched for in the index
+    - if the prefix does not exist, a NotFoundError is thrown/raised/returned.
+    - if the prefix exists, its TIMESTAMP is extracted and checked if it is greater (later) than the name of the current
       log file.
     - if this TIMESTAMP is later, its value is quickly got from `memtable` in memory. If for some crazy reason, it does
       not exist there, a CorruptedDataError is thrown/raised/returned.
@@ -192,27 +192,27 @@ go test ./...
 
 ### File formats
 
-- The file format of the ".idx" index files is just "key<key_value_separator>TIMESTAMPED-key<token>" separated by a
+- The file format of the ".idx" index files is just "prefix<key_value_separator>TIMESTAMPED-prefix<token>" separated by a
   unique token e.g. "{&*/%}" and a key_value_separator e.g. "[><?&(^#]"
 
 ```
 goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pig[><?&(^#]1655304770534578-pig{&*/%}fish[><?&(^#]1655303775538278-fish$%#@*&^&
 ```
 
-- The file format of the ".del" files is just "TIMESTAMPED-key<token>" separated by a unique token e.g. "{&*/%}"
+- The file format of the ".del" files is just "TIMESTAMPED-prefix<token>" separated by a unique token e.g. "{&*/%}"
 
 ```
 1655304770518678-goat{&*/%}1655304670510698-hen{&*/%}1655304770534578-pig{&*/%}1655303775538278-fish$%#@*&^&
 ```
 
-- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-key<key_value_separator>value<token>" separated
+- The file format of the ".log" and ".cky" files is just  "TIMESTAMPED-prefix<key_value_separator>value<token>" separated
   by a unique token e.g. "{&*/%}" and a key_value_separator like "[><?&(^#]"
 
 ```
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
 
-**Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
+**Note: There is configuration that one can enable to escape the "token" in any user-defined prefix or value just to avoid
 weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
 ## Acknowledgments
