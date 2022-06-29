@@ -323,7 +323,7 @@ func TestStore(t *testing.T) {
 		key := "non-existent"
 
 		store := NewStore(dbPath, maxFileSizeKB)
-		err = store.Load()
+		err := store.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -335,11 +335,70 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("DeleteKeyShouldRemoveKeyFromIndexAndAddItToDelFile", func(t *testing.T) {
+		key := "pig"
+		expectedIndex := map[string]string{
+			"cow":  "1655375120328185000-cow",
+			"dog":  "1655375120328185100-dog",
+			"goat": "1655404770518678-goat",
+			"hen":  "1655404670510698-hen",
+			"fish": "1655403775538278-fish",
+		}
+		expectedKeysMarkedForDelete := []string{"1655404770534578-pig"}
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = store.Delete(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		idxFileContent, err := os.ReadFile(indexFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mapFromIdxFile, err := ExtractKeyValuesFromByteArray(idxFileContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		delFileContent, err := os.ReadFile(delFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listFromDelFile, err := ExtractTokensFromByteArray(delFileContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, errAfterDel := store.Get(key)
+
+		assert.Equal(t, expectedIndex, mapFromIdxFile)
+		assert.Equal(t, expectedKeysMarkedForDelete, listFromDelFile)
+		assert.Equal(t, expectedIndex, store.index)
+		assert.True(t, errors.Is(errAfterDel, ErrNotFound))
 	})
 
 	t.Run("DeleteNonExistentKeyThrowsNotFoundError", func(t *testing.T) {
+		key := "non-existent"
 
+		store := NewStore(dbPath, maxFileSizeKB)
+		err := store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		err = store.Delete(key)
+		assert.True(t, errors.Is(err, ErrNotFound))
 	})
 
 	t.Run("ClearShouldDeleteAllDataOnDisk", func(t *testing.T) {

@@ -95,11 +95,7 @@ func (s *Store) Load() error {
 	}
 
 	err = s.loadMemtableFromDisk()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // Set adds or updates the value corresponding to the given key in store
@@ -131,7 +127,25 @@ func (s *Store) Get(key string) (string, error) {
 }
 
 func (s *Store) Delete(key string) error {
-	panic("implement me")
+	timestampedKey, ok := s.index[key]
+	if !ok {
+		return ErrNotFound
+	}
+
+	delete(s.index, key)
+	err := PersistMapDataToFile(s.index, s.indexFilePath)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(s.delFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	_, err = f.WriteString(fmt.Sprintf("%s%s", timestampedKey, TokenSeparator))
+	return err
 }
 
 func (s *Store) Clear() error {
@@ -167,11 +181,7 @@ func (s *Store) Vacuum() error {
 
 	delFilePath := filepath.Join(s.dbPath, DelFilename)
 	_, err = os.Create(delFilePath)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // loadFilePropsFromDisk loads the attributes that depend on the things in the folder
@@ -319,12 +329,7 @@ func (s *Store) removeTimestampedKeyForKeyIfExists(key string) error {
 		return nil
 	}
 
-	err := DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
 }
 
 // saveKeyValuePair saves the key value pair in memtable and log file if it is newer than log file
@@ -354,11 +359,7 @@ func (s *Store) saveKeyValueToMemtable(timestampedKey string, value string) erro
 	}
 
 	err = s.rollLogFileIfTooBig()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // saveKeyValueToCache saves the key value pair to cache and persists cache
@@ -394,9 +395,7 @@ func (s *Store) rollLogFileIfTooBig() error {
 		sort.Strings(s.dataFiles)
 
 		err = s.createNewLogFile()
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	return nil
@@ -415,7 +414,6 @@ func (s *Store) getTimestampRangeForKey(key string) *Range {
 		if current > key {
 			return &Range{Start: timestamps[i-1], End: current}
 		}
-
 	}
 
 	return nil
@@ -449,7 +447,9 @@ func (s *Store) deleteKeyValuePairIfExists(timestampedKey string) error {
 	if s.cache.IsInRange(timestampedKey) {
 		s.cache.Remove(timestampedKey)
 		return s.persistCacheToDisk()
-	} else if timestampedKey >= s.currentLogFile {
+	}
+
+	if timestampedKey >= s.currentLogFile {
 		delete(s.memtable, timestampedKey)
 		return PersistMapDataToFile(s.memtable, s.currentLogFilePath)
 	}
@@ -472,7 +472,6 @@ func (s *Store) getValueForKey(timestampedKey string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-
 	}
 
 	if value, ok := s.cache.data[timestampedKey]; ok {
