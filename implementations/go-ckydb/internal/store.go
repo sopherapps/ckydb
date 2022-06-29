@@ -102,29 +102,6 @@ func (s *Store) Load() error {
 	return nil
 }
 
-// loadFilePropsFromDisk loads the attributes that depend on the things in the folder
-func (s *Store) loadFilePropsFromDisk() error {
-	filesInFolder, err := GetFileOrFolderNamesInFolder(s.dbPath)
-	if err != nil {
-		return err
-	}
-
-	for _, filename := range filesInFolder {
-		filenameLength := len(filename)
-		switch filename[filenameLength-3:] {
-		case LogFileExt:
-			s.currentLogFile = filename[:filenameLength-4]
-		case DataFileExt:
-			s.dataFiles = append(s.dataFiles, filename[:filenameLength-4])
-		}
-	}
-
-	// sort these data files
-	sort.Strings(s.dataFiles)
-
-	return nil
-}
-
 // Set adds or updates the value corresponding to the given key in store
 // It might return an ErrCorruptedData error but if it succeeds, no error is returned
 func (s *Store) Set(key string, value string) error {
@@ -145,7 +122,12 @@ func (s *Store) Set(key string, value string) error {
 }
 
 func (s *Store) Get(key string) (string, error) {
-	panic("implement me")
+	timestampedKey, ok := s.index[key]
+	if !ok {
+		return "", ErrNotFound
+	}
+
+	return s.getValueForKey(timestampedKey)
 }
 
 func (s *Store) Delete(key string) error {
@@ -188,6 +170,29 @@ func (s *Store) Vacuum() error {
 	if err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// loadFilePropsFromDisk loads the attributes that depend on the things in the folder
+func (s *Store) loadFilePropsFromDisk() error {
+	filesInFolder, err := GetFileOrFolderNamesInFolder(s.dbPath)
+	if err != nil {
+		return err
+	}
+
+	for _, filename := range filesInFolder {
+		filenameLength := len(filename)
+		switch filename[filenameLength-3:] {
+		case LogFileExt:
+			s.currentLogFile = filename[:filenameLength-4]
+		case DataFileExt:
+			s.dataFiles = append(s.dataFiles, filename[:filenameLength-4])
+		}
+	}
+
+	// sort these data files
+	sort.Strings(s.dataFiles)
 
 	return nil
 }
@@ -450,4 +455,29 @@ func (s *Store) deleteKeyValuePairIfExists(timestampedKey string) error {
 	}
 
 	return nil
+}
+
+// getValueForKey gets the value corresponding to a given timestampedKey
+func (s *Store) getValueForKey(timestampedKey string) (string, error) {
+	if timestampedKey >= s.currentLogFile {
+		if value, ok := s.memtable[timestampedKey]; ok {
+			return value, nil
+		}
+
+		return "", ErrCorruptedData
+	}
+
+	if !s.cache.IsInRange(timestampedKey) {
+		err := s.loadCacheContainingKey(timestampedKey)
+		if err != nil {
+			return "", err
+		}
+
+	}
+
+	if value, ok := s.cache.data[timestampedKey]; ok {
+		return value, nil
+	}
+
+	return "", ErrCorruptedData
 }

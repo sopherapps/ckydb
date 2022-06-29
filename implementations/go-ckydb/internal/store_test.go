@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -224,19 +225,113 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("GetNewKeyShouldGetValueFromMemtable", func(t *testing.T) {
+		key, expectedValue := "fish", "8990 months"
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// remove the database files to show data is got straight from memory
+		err = ClearDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		actualValue, _ := store.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, expectedValue, actualValue)
 	})
 
 	t.Run("GetOldKeyShouldUpdateCacheFromDiskAndGetValueFromCache", func(t *testing.T) {
+		key, expectedValue := "cow", "500 months"
+		expectedInitialCache := NewCache(nil, "0", "0")
+		expectedFinalCache := NewCache(
+			map[string]string{"1655375120328185000-cow": "500 months", "1655375120328185100-dog": "23 months"},
+			strings.TrimRight(dataFiles[0], ".cky"),
+			strings.TrimRight(dataFiles[1], ".cky"))
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		initialCache := store.cache
+		value, err := store.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finalCache := store.cache
+
+		assert.Equal(t, expectedValue, value)
+		assert.Equal(t, expectedInitialCache, initialCache)
+		assert.Equal(t, expectedFinalCache, finalCache)
 	})
 
 	t.Run("GetOldKeyAgainShouldPickKeyValueFromMemoryCache", func(t *testing.T) {
+		key, expectedValue := "cow", "500 months"
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = store.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// remove the database files to show data is got straight from memory on next get
+		err = ClearDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		value, err := store.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, expectedValue, value)
 	})
 
 	t.Run("GetNonExistentKeyThrowsNotFoundError", func(t *testing.T) {
+		key := "non-existent"
 
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		_, err = store.Get(key)
+
+		assert.True(t, errors.Is(err, ErrNotFound))
 	})
 
 	t.Run("DeleteKeyShouldRemoveKeyFromIndexAndAddItToDelFile", func(t *testing.T) {
