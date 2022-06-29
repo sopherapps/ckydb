@@ -238,7 +238,7 @@ func (s *Store) loadMemtableFromDisk() error {
 		return err
 	}
 
-	s.index = dataAsMap
+	s.memtable = dataAsMap
 	return nil
 }
 
