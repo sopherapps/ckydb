@@ -10,10 +10,8 @@ import (
 )
 
 const (
-	LogFileExt   = "log"
-	DelFileExt   = "del"
-	DataFileExt  = "cky"
-	IndexFileExt = "idx"
+	LogFileExt  = "log"
+	DataFileExt = "cky"
 
 	IndexFilename = "index.idx"
 	DelFilename   = "delete.del"
@@ -77,13 +75,11 @@ func (s *Store) Load() error {
 		return err
 	}
 
-	// vacuum to remove keys already marked for deletion
 	err = s.Vacuum()
 	if err != nil {
 		return err
 	}
 
-	// load the files
 	err = s.loadFilePropsFromDisk()
 	if err != nil {
 		return err
@@ -117,6 +113,8 @@ func (s *Store) Set(key string, value string) error {
 	return nil
 }
 
+// Get retrieves the value corresponding to the given key
+// It returns a ErrNotFound error if the key is nonexistent
 func (s *Store) Get(key string) (string, error) {
 	timestampedKey, ok := s.index[key]
 	if !ok {
@@ -126,6 +124,8 @@ func (s *Store) Get(key string) (string, error) {
 	return s.getValueForKey(timestampedKey)
 }
 
+// Delete removes the key-value pair corresponding to the passed key
+// It returns an ErrNotFound error if the key is nonexistent
 func (s *Store) Delete(key string) error {
 	timestampedKey, ok := s.index[key]
 	if !ok {
@@ -148,10 +148,18 @@ func (s *Store) Delete(key string) error {
 	return err
 }
 
+// Clear resets the entire Store, and clears everything on disk
 func (s *Store) Clear() error {
-	panic("implement me")
+	err := s.clearDisk()
+	if err != nil {
+		return err
+	}
+
+	return s.Load()
 }
 
+// Vacuum deletes all key-value pairs that have been previously marked for 'delete'
+// when store.Delete(key) was called on them.
 func (s *Store) Vacuum() error {
 	keysToDelete, err := s.getKeysToDelete()
 	if err != nil {
@@ -186,6 +194,7 @@ func (s *Store) Vacuum() error {
 
 // loadFilePropsFromDisk loads the attributes that depend on the things in the folder
 func (s *Store) loadFilePropsFromDisk() error {
+	s.dataFiles = nil
 	filesInFolder, err := GetFileOrFolderNamesInFolder(s.dbPath)
 	if err != nil {
 		return err
@@ -479,4 +488,9 @@ func (s *Store) getValueForKey(timestampedKey string) (string, error) {
 	}
 
 	return "", ErrCorruptedData
+}
+
+// clearDisk deletes all files in the database folder
+func (s *Store) clearDisk() error {
+	return os.RemoveAll(s.dbPath)
 }

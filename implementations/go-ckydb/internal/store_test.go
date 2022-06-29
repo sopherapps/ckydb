@@ -19,6 +19,8 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	emptyMap := map[string]string{}
+	var emptyList []string
 	maxFileSizeKB := 320.0 / 1024
 	logFilename := "1655375171402014000.log"
 	indexFilename := "index.idx"
@@ -79,8 +81,6 @@ func TestStore(t *testing.T) {
 	t.Run("LoadShouldCreateDatabaseFolderWithIndexAndDelFilesIfNotExist", func(t *testing.T) {
 		expectedCache := NewCache(nil, "0", "0")
 		expectedFiles := []string{DelFilename, IndexFilename}
-		emptyMap := map[string]string{}
-		var emptyList []string
 
 		err := ClearDummyFileDataInDb(dbPath)
 		if err != nil {
@@ -401,8 +401,46 @@ func TestStore(t *testing.T) {
 		assert.True(t, errors.Is(err, ErrNotFound))
 	})
 
-	t.Run("ClearShouldDeleteAllDataOnDisk", func(t *testing.T) {
+	t.Run("ClearShouldDeleteAllDataOnDiskAndResetAllProperties", func(t *testing.T) {
+		expectedCache := NewCache(nil, "0", "0")
+		expectedFiles := []string{delFilename, indexFilename}
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = store.Clear()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		currentLogFilename := fmt.Sprintf("%s.log", store.currentLogFile)
+		expectedFiles = append(expectedFiles, currentLogFilename)
+		expectedCurrentLogFilePath := filepath.Join(dbPath, currentLogFilename)
+		actualFiles, err := GetFileOrFolderNamesInFolder(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(expectedFiles)
+		sort.Strings(actualFiles)
+
+		assert.Equal(t, expectedCache, store.cache)
+		assert.NotEqual(t, "", store.currentLogFile)
+		assert.Equal(t, emptyMap, store.index)
+		assert.Equal(t, emptyMap, store.memtable)
+		assert.Equal(t, emptyList, store.dataFiles)
+		assert.Equal(t, expectedFiles, actualFiles)
+		assert.Equal(t, indexFilePath, store.indexFilePath)
+		assert.Equal(t, expectedCurrentLogFilePath, store.currentLogFilePath)
+		assert.Equal(t, delFilePath, store.delFilePath)
 	})
 
 	t.Run("VacuumShouldDeleteAllKeyValuesInDataFilesAndLogFileForAllKeysInDelFile", func(t *testing.T) {
@@ -411,8 +449,6 @@ func TestStore(t *testing.T) {
 			"1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", ""}
 		expectedDelFileContent := ""
 
-		delFilePath := filepath.Join(dbPath, delFilename)
-		logFilePath := filepath.Join(dbPath, logFilename)
 		dataFilePaths := make([]string, len(dataFiles))
 
 		for i, file := range dataFiles {
@@ -461,8 +497,6 @@ func TestStore(t *testing.T) {
 			"1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&", "1655375171402014000-bar><?&(^#foo$%#@*&^&"}
 		expectedDelFileContent := ""
 
-		delFilePath := filepath.Join(dbPath, delFilename)
-		logFilePath := filepath.Join(dbPath, logFilename)
 		dataFilePaths := make([]string, len(dataFiles))
 
 		for i, file := range dataFiles {
