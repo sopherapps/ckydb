@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,13 +32,16 @@ type Storage interface {
 }
 
 type Store struct {
-	dbPath         string
-	maxFileSizeKB  float64
-	cache          *Cache
-	memtable       map[string]string
-	index          map[string]string
-	dataFiles      []string
-	currentLogFile string
+	dbPath             string
+	maxFileSizeKB      float64
+	cache              *Cache
+	memtable           map[string]string
+	index              map[string]string
+	dataFiles          []string
+	currentLogFile     string
+	currentLogFilePath string
+	delFilePath        string
+	indexFilePath      string
 }
 
 // NewStore initializes a new Store instance for the given dbPath
@@ -46,6 +50,8 @@ func NewStore(dbPath string, maxFileSizeKB float64) *Store {
 		dbPath:        dbPath,
 		maxFileSizeKB: maxFileSizeKB,
 		cache:         NewCache(nil, "0", "0"),
+		delFilePath:   filepath.Join(dbPath, DelFilename),
+		indexFilePath: filepath.Join(dbPath, IndexFilename),
 	}
 }
 
@@ -113,13 +119,29 @@ func (s *Store) loadFilePropsFromDisk() error {
 		}
 	}
 
+	// sort these data files
+	sort.Strings(s.dataFiles)
+
 	return nil
 }
 
 // Set adds or updates the value corresponding to the given key in store
 // It might return an ErrCorruptedData error but if it succeeds, no error is returned
 func (s *Store) Set(key string, value string) error {
-	panic("implement me")
+	timestampedKey, err := s.getTimestampedKey(key)
+	if err != nil {
+		_ = s.removeTimestampedKeyForKeyIfExists(key)
+		return err
+	}
+
+	err = s.saveKeyValuePair(timestampedKey, value)
+	if err != nil {
+		_ = s.deleteKeyValuePairIfExists(timestampedKey)
+		_ = s.removeTimestampedKeyForKeyIfExists(key)
+		return err
+	}
+
+	return nil
 }
 
 func (s *Store) Get(key string) (string, error) {
@@ -191,6 +213,7 @@ func (s *Store) createLogFileIfNotExists() error {
 
 	for _, filename := range filesInFolder {
 		if strings.HasSuffix(filename, LogFileExt) {
+			s.currentLogFilePath = filepath.Join(s.dbPath, filename)
 			return nil
 		}
 	}
@@ -209,6 +232,7 @@ func (s *Store) createNewLogFile() error {
 	}
 
 	s.currentLogFile = logFilename
+	s.currentLogFilePath = logFilePath
 	return nil
 }
 
@@ -255,4 +279,175 @@ func (s *Store) getKeysToDelete() ([]string, error) {
 	}
 
 	return ExtractTokensFromByteArray(data)
+}
+
+// getTimestampedKey gets the timestamped key corresponding to the given key in the index
+// If there is none, it creates a new timestamped key and adds it to the index and the index file
+func (s *Store) getTimestampedKey(key string) (string, error) {
+	timestampedKey, ok := s.index[key]
+
+	if !ok {
+		timestampedKey = fmt.Sprintf("%d-%s", time.Now().UnixNano(), key)
+		s.index[key] = timestampedKey
+
+		f, err := os.OpenFile(s.indexFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = f.Close() }()
+
+		data := fmt.Sprintf("%s%s%s%s", key, KeyValueSeparator, timestampedKey, TokenSeparator)
+		_, err = f.WriteString(data)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return timestampedKey, nil
+}
+
+// removeTimestampedKeyForKeyIfExists removes the key and timestamped key from the index
+// and the index file if it exists
+func (s *Store) removeTimestampedKeyForKeyIfExists(key string) error {
+	_, ok := s.index[key]
+	if !ok {
+		return nil
+	}
+
+	err := DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// saveKeyValuePair saves the key value pair in memtable and log file if it is newer than log file
+// or in cache and in the corresponding dataFile if the key is old
+func (s *Store) saveKeyValuePair(timestampedKey string, value string) error {
+	if timestampedKey >= s.currentLogFile {
+		return s.saveKeyValueToMemtable(timestampedKey, value)
+	}
+
+	if !s.cache.IsInRange(timestampedKey) {
+		err := s.loadCacheContainingKey(timestampedKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	return s.saveKeyValueToCache(timestampedKey, value)
+}
+
+// saveKeyValueToMemtable saves the key value pair to memtable and persists memtable
+// to current log file
+func (s *Store) saveKeyValueToMemtable(timestampedKey string, value string) error {
+	s.memtable[timestampedKey] = value
+	err := PersistMapDataToFile(s.memtable, s.currentLogFilePath)
+	if err != nil {
+		return err
+	}
+
+	err = s.rollLogFileIfTooBig()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// saveKeyValueToCache saves the key value pair to cache and persists cache
+// to corresponding data file
+func (s *Store) saveKeyValueToCache(timestampedKey string, value string) error {
+	s.cache.Update(timestampedKey, value)
+	return s.persistCacheToDisk()
+}
+
+// persistCacheToDisk persists the current cache to its corresponding data file
+func (s *Store) persistCacheToDisk() error {
+	dataFilePath := filepath.Join(s.dbPath, fmt.Sprintf("%s.%s", s.cache.start, DataFileExt))
+	return PersistMapDataToFile(s.cache.data, dataFilePath)
+}
+
+// rollLogFileIfTooBig rolls the log file if it has exceeded the maximum size it should have
+func (s *Store) rollLogFileIfTooBig() error {
+	logFileSize, err := GetFileSize(s.currentLogFilePath)
+	if err != nil {
+		return err
+	}
+
+	if logFileSize >= s.maxFileSizeKB {
+		newDataFilename := fmt.Sprintf("%s.%s", s.currentLogFile, DataFileExt)
+		err = os.Rename(s.currentLogFilePath, filepath.Join(s.dbPath, newDataFilename))
+		if err != nil {
+			return err
+		}
+
+		s.memtable = map[string]string{}
+		s.dataFiles = append(s.dataFiles, s.currentLogFile)
+		// ensure these data files are sorted
+		sort.Strings(s.dataFiles)
+
+		err = s.createNewLogFile()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getTimestampRangeForKey returns the range of timestamps between which
+// the key lies. The timestamps are got from the names of the data files and the current log file
+func (s *Store) getTimestampRangeForKey(key string) *Range {
+	numberOfTimestamps := len(s.dataFiles) + 1
+	timestamps := make([]string, numberOfTimestamps)
+	copy(timestamps, s.dataFiles)
+	timestamps[numberOfTimestamps-1] = s.currentLogFile
+
+	for i := 1; i < numberOfTimestamps; i++ {
+		current := timestamps[i]
+		if current > key {
+			return &Range{Start: timestamps[i-1], End: current}
+		}
+
+	}
+
+	return nil
+}
+
+// loadCacheContainingKey loads the cache with data containing the timestampedKey
+func (s *Store) loadCacheContainingKey(timestampedKey string) error {
+	timestampRange := s.getTimestampRangeForKey(timestampedKey)
+	if timestampRange == nil {
+		return ErrCorruptedData
+	}
+
+	filePath := filepath.Join(s.dbPath, fmt.Sprintf("%s.%s", timestampRange.Start, DataFileExt))
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	mapData, err := ExtractKeyValuesFromByteArray(data)
+	if err != nil {
+		return err
+	}
+
+	s.cache = NewCache(mapData, timestampRange.Start, timestampRange.End)
+	return nil
+}
+
+// deleteKeyValuePairIfExists deletes the given key value pair from
+// the index, the cache or the memtable, the log file or any data file
+func (s *Store) deleteKeyValuePairIfExists(timestampedKey string) error {
+	if s.cache.IsInRange(timestampedKey) {
+		s.cache.Remove(timestampedKey)
+		return s.persistCacheToDisk()
+	} else if timestampedKey >= s.currentLogFile {
+		delete(s.memtable, timestampedKey)
+		return PersistMapDataToFile(s.memtable, s.currentLogFilePath)
+	}
+
+	return nil
 }

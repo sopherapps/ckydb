@@ -15,6 +15,11 @@ var dummyDataFileMap = map[string]string{
 	"index.idx":               "cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&pig><?&(^#1655404770534578-pig$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&",
 }
 
+type Range struct {
+	Start string
+	End   string
+}
+
 // ClearDummyFileDataInDb clears the files in the given database folder
 func ClearDummyFileDataInDb(dbPath string) error {
 	return os.RemoveAll(dbPath)
@@ -164,6 +169,28 @@ func ReadFileToString(path string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+// PersistMapDataToFile overwrites the data in the file at pathToFile with the
+// equivalent of the map data passed
+func PersistMapDataToFile(data map[string]string, pathToFile string) error {
+	content := ""
+
+	for k, v := range data {
+		content = fmt.Sprintf("%s%s%s%s%s", content, k, KeyValueSeparator, v, TokenSeparator)
+	}
+
+	return os.WriteFile(pathToFile, []byte(content), 0777)
+}
+
+// GetFileSize returns the size of the file in kilobytes
+func GetFileSize(pathToFile string) (float64, error) {
+	info, err := os.Stat(pathToFile)
+	if err != nil {
+		return 0, err
+	}
+
+	return float64(info.Size()) / 1024, nil
 }
 
 // hasAnyOfPrefixes checks if the string str has any of the prefixes

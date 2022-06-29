@@ -7,4 +7,5 @@ var (
 	ErrNotRunning     = errors.New("not running")
 	ErrNotFound       = errors.New("not found")
 	ErrCorruptedData  = errors.New("data in database is corrupt")
+	ErrOutOfBounds    = errors.New("out of bounds")
 )

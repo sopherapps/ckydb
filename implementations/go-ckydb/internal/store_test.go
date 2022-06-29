@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -19,8 +20,11 @@ func TestStore(t *testing.T) {
 
 	maxFileSizeKB := 320.0 / 1024
 	logFilename := "1655375171402014000.log"
-	//indexFilename := "index.idx"
+	indexFilename := "index.idx"
 	delFilename := "delete.del"
+	indexFilePath := filepath.Join(dbPath, indexFilename)
+	delFilePath := filepath.Join(dbPath, delFilename)
+	logFilePath := filepath.Join(dbPath, logFilename)
 	dataFiles := []string{
 		"1655375120328185000.cky",
 		"1655375120328186000.cky",
@@ -66,6 +70,9 @@ func TestStore(t *testing.T) {
 		assert.Equal(t, expectedIndex, store.index)
 		assert.Equal(t, expectedDataFiles, store.dataFiles)
 		assert.Equal(t, expectedCurrentLogFile, store.currentLogFile)
+		assert.Equal(t, indexFilePath, store.indexFilePath)
+		assert.Equal(t, logFilePath, store.currentLogFilePath)
+		assert.Equal(t, delFilePath, store.delFilePath)
 	})
 
 	t.Run("LoadShouldCreateDatabaseFolderWithIndexAndDelFilesIfNotExist", func(t *testing.T) {
@@ -86,7 +93,9 @@ func TestStore(t *testing.T) {
 		}
 		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
 
-		expectedFiles = append(expectedFiles, fmt.Sprintf("%s.log", store.currentLogFile))
+		currentLogFilename := fmt.Sprintf("%s.log", store.currentLogFile)
+		expectedFiles = append(expectedFiles, currentLogFilename)
+		expectedCurrentLogFilePath := filepath.Join(dbPath, currentLogFilename)
 		actualFiles, err := GetFileOrFolderNamesInFolder(dbPath)
 		if err != nil {
 			t.Fatal(err)
@@ -101,14 +110,117 @@ func TestStore(t *testing.T) {
 		assert.Equal(t, emptyMap, store.memtable)
 		assert.Equal(t, emptyList, store.dataFiles)
 		assert.Equal(t, expectedFiles, actualFiles)
+		assert.Equal(t, indexFilePath, store.indexFilePath)
+		assert.Equal(t, expectedCurrentLogFilePath, store.currentLogFilePath)
+		assert.Equal(t, delFilePath, store.delFilePath)
 	})
 
 	t.Run("SetNewKeyShouldAddKeyValueToMemtableAndIndexAndLogFile", func(t *testing.T) {
+		key, value := time.Now().Format("2006-01-02 15:04:05"), "foo"
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = store.Set(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		timestampedKey := store.index[key]
+		expectedIndexFileEntry := fmt.Sprintf("%s%s%s%s", key, KeyValueSeparator, timestampedKey, TokenSeparator)
+		expectedLogFileEntry := fmt.Sprintf("%s%s%s%s", timestampedKey, KeyValueSeparator, value, TokenSeparator)
+
+		valueInMemtable := store.memtable[timestampedKey]
+		indexFileContent, err := ReadFileToString(indexFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		logFileContent, err := ReadFileToString(logFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, value, valueInMemtable)
+		assert.Contains(t, indexFileContent, expectedIndexFileEntry)
+		assert.Contains(t, logFileContent, expectedLogFileEntry)
+	})
+
+	t.Run("SetSameRecentKeyShouldUpdateKeyValueInMemtableAndLogFile", func(t *testing.T) {
+		key, value, newValue := time.Now().Format("2006-01-02 15:04:05"), "foo", "hello-world"
+
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = store.Set(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = store.Set(key, newValue)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		timestampedKey := store.index[key]
+		expectedLogFileEntry := fmt.Sprintf("%s%s%s%s", timestampedKey, KeyValueSeparator, newValue, TokenSeparator)
+		valueInMemtable := store.memtable[timestampedKey]
+		logFileContent, err := ReadFileToString(logFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, newValue, valueInMemtable)
+		assert.Contains(t, logFileContent, expectedLogFileEntry)
 	})
 
 	t.Run("SetOldKeyShouldUpdateKeyValueInCacheAndDataFile", func(t *testing.T) {
+		key, value := "cow", "foo-again"
+		dataFilePath := filepath.Join(dbPath, dataFiles[0])
 
+		err := AddDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = store.Set(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		timestampedKey := store.index[key]
+		expectedDataFileEntry := fmt.Sprintf("%s%s%s", timestampedKey, KeyValueSeparator, value)
+		valueInCache := store.cache.data[timestampedKey]
+		dataFileContent, err := ReadFileToString(dataFilePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		assert.Equal(t, value, valueInCache)
+		assert.Contains(t, dataFileContent, expectedDataFileEntry)
 	})
 
 	t.Run("GetNewKeyShouldGetValueFromMemtable", func(t *testing.T) {
