@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,6 +66,41 @@ func TestStore(t *testing.T) {
 		assert.Equal(t, expectedIndex, store.index)
 		assert.Equal(t, expectedDataFiles, store.dataFiles)
 		assert.Equal(t, expectedCurrentLogFile, store.currentLogFile)
+	})
+
+	t.Run("LoadShouldCreateDatabaseFolderWithIndexAndDelFilesIfNotExist", func(t *testing.T) {
+		expectedCache := NewCache(nil, "0", "0")
+		expectedFiles := []string{DelFilename, IndexFilename}
+		emptyMap := map[string]string{}
+		var emptyList []string
+
+		err := ClearDummyFileDataInDb(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		store := NewStore(dbPath, maxFileSizeKB)
+		err = store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ClearDummyFileDataInDb(dbPath) }()
+
+		expectedFiles = append(expectedFiles, fmt.Sprintf("%s.log", store.currentLogFile))
+		actualFiles, err := GetFileOrFolderNamesInFolder(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sort.Strings(expectedFiles)
+		sort.Strings(actualFiles)
+
+		assert.Equal(t, expectedCache, store.cache)
+		assert.NotEqual(t, "", store.currentLogFile)
+		assert.Equal(t, emptyMap, store.index)
+		assert.Equal(t, emptyMap, store.memtable)
+		assert.Equal(t, emptyList, store.dataFiles)
+		assert.Equal(t, expectedFiles, actualFiles)
 	})
 
 	t.Run("SetNewKeyShouldAddKeyValueToMemtableAndIndexAndLogFile", func(t *testing.T) {

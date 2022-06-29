@@ -51,8 +51,12 @@ func NewStore(dbPath string, maxFileSizeKB float64) *Store {
 
 // Load loads the storage from disk
 func (s *Store) Load() error {
-	// create files if they don't exist
-	err := s.createIndexFileIfNotExists()
+	err := os.MkdirAll(s.dbPath, 0777)
+	if err != nil {
+		return err
+	}
+
+	err = s.createIndexFileIfNotExists()
 	if err != nil {
 		return err
 	}
