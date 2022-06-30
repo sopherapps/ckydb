@@ -8,6 +8,14 @@ import (
 	"github.com/sopherapps/ckydb/implementations/go-ckydb/internal"
 )
 
+var (
+	ErrAlreadyRunning = internal.ErrAlreadyRunning
+	ErrNotRunning     = internal.ErrNotRunning
+	ErrNotFound       = internal.ErrNotFound
+	ErrCorruptedData  = internal.ErrCorruptedData
+	ErrOutOfBounds    = internal.ErrOutOfBounds
+)
+
 type Controller interface {
 	Open() error
 	Close() error

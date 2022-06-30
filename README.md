@@ -16,7 +16,7 @@ All implementations are found in this monorepo in the `implementations` folder
 pip install ckydb
 ```
 
-- Go (Pending)
+- Go (Completed -- public API is stable)
 
 ```shell
 go get github.com/sopherapps/ckydb/implementations/go-ckydb
@@ -45,7 +45,7 @@ npm install ckydb
   memory from the index file (a ".idx" file). The index is basically a map of `key: TIMESTAMPED-key`
 - The TIMESTAMPED-key and its value are stored first in a log file (a ".log" file). This current log file has an
   in-memory copy we call `memtable`
-- When the current log file exceeds a predefined size (4MBs by default), it is converted to a sorted data file (a ".cky"
+- When the current log file exceeds a predefined size, it is converted to a sorted data file (a ".cky"
   file) and `memtable` refreshed and a new log file created.
 - The names of each ".cky" or ".log" file are the timestamps when they were created. Do note that conversion of ".log"
   to "cky" just changes the file extension.
@@ -56,7 +56,7 @@ npm install ckydb
 - The name of the current log (`current_log_file`) file is also kept in memory, and updated when a new log file is
   created.
 - There is also a ".del" file that holds all the `key: TIMESTAMPED-key` pairs that have been marked for deletion.
-- At a predefined interval (5 minutes by default), a background task deletes the values from ".cky" and ".log" files
+- At a predefined interval, a background task deletes the values from ".cky" and ".log" files
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
@@ -139,9 +139,6 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 ```
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
-
-**Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
-weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
 ## Acknowledgments
 

@@ -324,7 +324,7 @@ func TestCkydb(t *testing.T) {
 
 	t.Run("VacuumTaskRunsAtTheGivenInterval", func(t *testing.T) {
 		keyToDelete := "salut"
-		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB*80, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
