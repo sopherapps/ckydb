@@ -2,7 +2,9 @@ package ckydb
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -11,16 +13,21 @@ import (
 )
 
 func TestCkydb(t *testing.T) {
-	type testRecord struct {
-		key   string
-		value string
-	}
 	dbPath, err := filepath.Abs("testControllerDb")
 	if err != nil {
 		t.Fatal(err)
 	}
 	vacuumIntervalSec := 2.0
-	maxFileSizeKB := 3.0
+	maxFileSizeKB := 320.0 / 1024
+	testRecords := map[string]string{
+		"hey":      "English",
+		"hi":       "English",
+		"salut":    "French",
+		"bonjour":  "French",
+		"hola":     "Spanish",
+		"oi":       "Portuguese",
+		"mulimuta": "Runyoro",
+	}
 
 	t.Run("ConnectShouldCallOpen", func(t *testing.T) {
 		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
@@ -39,7 +46,7 @@ func TestCkydb(t *testing.T) {
 	})
 
 	t.Run("OpenShouldStartAllBackgroundTasks", func(t *testing.T) {
-		db, err := NewCkydb(dbPath, maxFileSizeKB, vacuumIntervalSec)
+		db, err := newCkydb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,16 +87,7 @@ func TestCkydb(t *testing.T) {
 	})
 
 	t.Run("SetNewKeyShouldAddKeyValueToStore", func(t *testing.T) {
-		testRecords := []testRecord{
-			{key: "", value: ""},
-		}
-
-		err := internal.ClearDummyFileDataInDb(dbPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		db, err := Connect(dbPath, 6, 3)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,37 +96,37 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
-		for _, record := range testRecords {
-			err = db.Set(record.key, record.value)
+		for key, value := range testRecords {
+			err = db.Set(key, value)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		for _, record := range testRecords {
-			value, err := db.Get(record.key)
+		for k, v := range testRecords {
+			value, err := db.Get(k)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			assert.Equal(t, record.value, value)
+			assert.Equal(t, v, value)
 		}
 	})
 
 	t.Run("SetOldKeyShouldUpdateOldKeyWithValue", func(t *testing.T) {
-		oldRecords := map[string]testRecord{
-			"": {key: "", value: ""},
+		oldRecords := make(map[string]string, len(testRecords))
+		for k, v := range testRecords {
+			oldRecords[k] = v
 		}
-		updates := []testRecord{
-			{key: "", value: ""},
+		updates := map[string]string{
+			"hey":      "Jane",
+			"hi":       "John",
+			"salut":    "Jean",
+			"oi":       "Ronaldo",
+			"mulimuta": "Aliguma",
 		}
 
-		err := internal.ClearDummyFileDataInDb(dbPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		db, err := Connect(dbPath, 6, 3)
+		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,38 +135,38 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
-		for _, record := range oldRecords {
-			err = db.Set(record.key, record.value)
+		for k, v := range oldRecords {
+			err = db.Set(k, v)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		for _, record := range updates {
-			err = db.Set(record.key, record.value)
+		for k, v := range updates {
+			err = db.Set(k, v)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			delete(oldRecords, record.key)
+			delete(oldRecords, k)
 		}
 
-		for _, record := range updates {
-			value, err := db.Get(record.key)
+		for k, v := range updates {
+			value, err := db.Get(k)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			assert.Equal(t, record.value, value)
+			assert.Equal(t, v, value)
 		}
 
-		for _, record := range oldRecords {
-			value, err := db.Get(record.key)
+		for k, v := range oldRecords {
+			value, err := db.Get(k)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			assert.Equal(t, record.value, value)
+			assert.Equal(t, v, value)
 		}
 	})
 
@@ -182,15 +180,17 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
-		value, err := db.Get("foo")
+		value, err := db.Get("cow")
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, "bar", value)
+		assert.Equal(t, "500 months", value)
 	})
 
 	t.Run("GetSameOldKeyAgainShouldGetValueFromMemoryCache", func(t *testing.T) {
+		key, expectedValue := "cow", "500 months"
+
 		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
@@ -200,17 +200,22 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
+		_, err = db.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		err = internal.ClearDummyFileDataInDb(dbPath)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		value, err := db.Get("foo")
+		value, err := db.Get(key)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, "bar", value)
+		assert.Equal(t, expectedValue, value)
 	})
 
 	t.Run("GetNewlyInsertedKeyShouldGetValueFromMemoryMemtable", func(t *testing.T) {
@@ -243,10 +248,11 @@ func TestCkydb(t *testing.T) {
 	})
 
 	t.Run("DeleteShouldDeleteTheKeyValuePairFromStore", func(t *testing.T) {
-		oldRecords := map[string]testRecord{
-			"": {key: "", value: ""},
+		oldRecords := make(map[string]string, len(testRecords))
+		for k, v := range testRecords {
+			oldRecords[k] = v
 		}
-		keysToDelete := []string{""}
+		keysToDelete := []string{"hey", "salut"}
 
 		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
@@ -257,8 +263,8 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
-		for _, record := range oldRecords {
-			err = db.Set(record.key, record.value)
+		for k, v := range oldRecords {
+			err = db.Set(k, v)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -278,21 +284,17 @@ func TestCkydb(t *testing.T) {
 			assert.True(t, errors.Is(internal.ErrNotFound, err))
 		}
 
-		for _, record := range oldRecords {
-			value, err := db.Get(record.key)
+		for k, v := range oldRecords {
+			value, err := db.Get(k)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			assert.Equal(t, record.value, value)
+			assert.Equal(t, v, value)
 		}
 	})
 
 	t.Run("ClearShouldDeleteAllKeysFromStore", func(t *testing.T) {
-		oldRecords := map[string]testRecord{
-			"": {key: "", value: ""},
-		}
-
 		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
@@ -302,8 +304,8 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
-		for _, record := range oldRecords {
-			err = db.Set(record.key, record.value)
+		for k, v := range testRecords {
+			err = db.Set(k, v)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -314,20 +316,14 @@ func TestCkydb(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for _, record := range oldRecords {
-			_, err = db.Get(record.key)
+		for k := range testRecords {
+			_, err = db.Get(k)
 			assert.True(t, errors.Is(internal.ErrNotFound, err))
 		}
 	})
 
 	t.Run("VacuumTaskRunsAtTheGivenInterval", func(t *testing.T) {
-		expectedDelFileContents := []string{""}
-		expectedLogFileContents := []string{""}
-		expectedDataFilesContents := []string{""}
-		expectedDelFileContentsAfterVacuum := []string{""}
-		expectedLogFileContentsAfterVacuum := []string{""}
-		expectedDataFilesContentsAfterVacuum := []string{""}
-
+		keyToDelete := "salut"
 		db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
 		if err != nil {
 			t.Fatal(err)
@@ -337,6 +333,21 @@ func TestCkydb(t *testing.T) {
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
+		for k, v := range testRecords {
+			err = db.Set(k, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		err = db.Delete(keyToDelete)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		idxFileContents, err := internal.ReadFilesWithExtension(dbPath, "idx")
+		if err != nil {
+			t.Fatal(err)
+		}
 		delFileContents, err := internal.ReadFilesWithExtension(dbPath, "del")
 		if err != nil {
 			t.Fatal(err)
@@ -345,13 +356,13 @@ func TestCkydb(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dataFilesContents, err := internal.ReadFilesWithExtension(dbPath, "cky")
-		if err != nil {
-			t.Fatal(err)
-		}
 
 		<-time.After(time.Second * time.Duration(vacuumIntervalSec))
 
+		idxFileContentsAfterVacuum, err := internal.ReadFilesWithExtension(dbPath, "idx")
+		if err != nil {
+			t.Fatal(err)
+		}
 		delFileContentsAfterVacuum, err := internal.ReadFilesWithExtension(dbPath, "del")
 		if err != nil {
 			t.Fatal(err)
@@ -360,22 +371,87 @@ func TestCkydb(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dataFilesContentsAfterVacuum, err := internal.ReadFilesWithExtension(dbPath, "cky")
+
+		assert.NotContains(t, idxFileContents[0], keyToDelete)
+		assert.Contains(t, delFileContents[0], keyToDelete)
+		assert.Contains(t, logFileContents[0], keyToDelete)
+		assert.NotContains(t, idxFileContentsAfterVacuum[0], keyToDelete)
+		assert.NotContains(t, delFileContentsAfterVacuum[0], keyToDelete)
+		assert.NotContains(t, logFileContentsAfterVacuum[0], keyToDelete)
+	})
+
+	t.Run("LogFileShouldBeTurnedToCkyFileAfterItExceedsTheMaxFileSizeKB", func(t *testing.T) {
+		var preRollData []map[string]string
+		postRollData := map[string]string{
+			"hey": "English",
+			"hi":  "English",
+		}
+
+		err := internal.ClearDummyFileDataInDb(dbPath)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, expectedDelFileContents, delFileContents)
-		assert.Equal(t, expectedLogFileContents, logFileContents)
-		assert.Equal(t, expectedDataFilesContents, dataFilesContents)
-		assert.Equal(t, expectedDelFileContentsAfterVacuum, delFileContentsAfterVacuum)
-		assert.Equal(t, expectedLogFileContentsAfterVacuum, logFileContentsAfterVacuum)
-		assert.Equal(t, expectedDataFilesContentsAfterVacuum, dataFilesContentsAfterVacuum)
+		db, err := Connect(dbPath, maxFileSizeKB, vacuumIntervalSec)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		defer func() {
+			_ = db.Close()
+			_ = internal.ClearDummyFileDataInDb(dbPath)
+		}()
+
+		for i := 0; i < 3; i++ {
+			data := map[string]string{}
+
+			for k, v := range testRecords {
+				key := fmt.Sprintf("%s-%d", k, i)
+				data[key] = v
+
+				err := db.Set(key, v)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			preRollData = append(preRollData, data)
+		}
+
+		for k, v := range postRollData {
+			err = db.Set(k, v)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		ckyFileContentsAfterRoll, err := internal.ReadFilesWithExtension(dbPath, "cky")
+		if err != nil {
+			t.Fatal(err)
+		}
+		logFileContentsAfterRoll, err := internal.ReadFilesWithExtension(dbPath, "log")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(ckyFileContentsAfterRoll)
+
+		assert.Equal(t, len(preRollData), len(ckyFileContentsAfterRoll))
+		for i, keySet := range preRollData {
+			for k, v := range keySet {
+				keyValuePair := fmt.Sprintf("%s%s%s", k, internal.KeyValueSeparator, v)
+				assert.Contains(t, ckyFileContentsAfterRoll[i], keyValuePair)
+			}
+		}
+
+		for k, v := range postRollData {
+			keyValuePair := fmt.Sprintf("%s%s%s", k, internal.KeyValueSeparator, v)
+			assert.Contains(t, logFileContentsAfterRoll[0], keyValuePair)
+		}
 	})
 }
 
 // connectToTestDb opens the db at the given path after
-// clearing out old data and adding in new test data
+// clearing out old data
 func connectToTestDb(dbPath string, maxFileSizeKB float64, vacuumIntervalSec float64) (*Ckydb, error) {
 	err := internal.ClearDummyFileDataInDb(dbPath)
 	if err != nil {

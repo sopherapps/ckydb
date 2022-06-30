@@ -17,6 +17,7 @@ type Task struct {
 	isRunning bool
 }
 
+// NewTask creates a new Task
 func NewTask(interval time.Duration, work func()) *Task {
 	return &Task{
 		done:      make(chan bool),
