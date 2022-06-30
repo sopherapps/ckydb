@@ -33,6 +33,9 @@ func TestCkydb(t *testing.T) {
 		}()
 
 		assert.Greater(t, len(db.tasks), 0)
+		for _, task := range db.tasks {
+			assert.True(t, task.IsRunning())
+		}
 	})
 
 	t.Run("OpenShouldStartAllBackgroundTasks", func(t *testing.T) {
@@ -51,6 +54,9 @@ func TestCkydb(t *testing.T) {
 		}()
 
 		assert.Greater(t, len(db.tasks), 0)
+		for _, task := range db.tasks {
+			assert.True(t, task.IsRunning())
+		}
 	})
 
 	t.Run("CloseShouldStopAllBackgroundTasks", func(t *testing.T) {
@@ -59,7 +65,6 @@ func TestCkydb(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() {
-			_ = db.Close()
 			_ = internal.ClearDummyFileDataInDb(dbPath)
 		}()
 
@@ -68,7 +73,10 @@ func TestCkydb(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		assert.Equal(t, db.tasks, nil)
+		assert.Greater(t, len(db.tasks), 0)
+		for _, task := range db.tasks {
+			assert.False(t, task.IsRunning())
+		}
 	})
 
 	t.Run("SetNewKeyShouldAddKeyValueToStore", func(t *testing.T) {

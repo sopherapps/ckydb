@@ -60,6 +60,10 @@ func (c *Ckydb) Open() error {
 			log.Printf("error: %s", err)
 		}
 	})
+	err := vacuumTask.Start()
+	if err != nil {
+		return err
+	}
 
 	c.tasks = append(c.tasks, vacuumTask)
 
@@ -74,7 +78,6 @@ func (c *Ckydb) Close() error {
 		}
 	}
 
-	c.tasks = nil
 	return nil
 }
 
