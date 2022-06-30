@@ -10,13 +10,13 @@ __Note: The project is still under heavy development__.
 
 All implementations are found in this monorepo in the `implementations` folder
 
-- Python (Completed -- public API is stable)
+- [Python](./implementations/py_ckydb) (Completed -- public API is stable)
 
 ```shell
 pip install ckydb
 ```
 
-- Go (Completed -- public API is stable)
+- [Go](./implementations/go-ckydb) (Completed -- public API is stable)
 
 ```shell
 go get github.com/sopherapps/ckydb/implementations/go-ckydb
