@@ -19,7 +19,10 @@ pub struct CorruptedDataError;
 
 impl Display for CorruptedDataError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "corrupted data: data on disk is inconsistent with that in memory")
+        write!(
+            f,
+            "corrupted data: data on disk is inconsistent with that in memory"
+        )
     }
 }
 

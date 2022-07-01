@@ -18,7 +18,7 @@ pub(crate) trait Worker {
     /// - [io::Error] errors may occur may be if the thread fails to start
     ///
     /// [io::Error]: std::io::Error
-    fn start(&self) -> Option<io::Error>;
+    fn start(&self) -> io::Result<()>;
 
     /// Stops the worker's execution, and only returns after it really has stopped
     ///
@@ -26,7 +26,7 @@ pub(crate) trait Worker {
     /// - [io::Error] errors may occur may be if the thread fails to start
     ///
     /// [io::Error]: std::io::Error
-    fn stop(&self) -> Option<io::Error>;
+    fn stop(&self) -> io::Result<()>;
 
     /// Checks to see if the worker is still running i.e. has been started and
     /// has not been stopped yet.
@@ -34,8 +34,7 @@ pub(crate) trait Worker {
 }
 
 /// `Task` is a type of [Worker]
-pub(crate) struct Task {
-}
+pub(crate) struct Task {}
 
 impl Task {
     /// Initializes a new `Task`
@@ -45,11 +44,11 @@ impl Task {
 }
 
 impl Worker for Task {
-    fn start(&self) -> Option<io::Error> {
+    fn start(&self) -> io::Result<()> {
         todo!()
     }
 
-    fn stop(&self) -> Option<io::Error> {
+    fn stop(&self) -> io::Result<()> {
         todo!()
     }
 

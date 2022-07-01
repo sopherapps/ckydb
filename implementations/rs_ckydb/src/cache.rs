@@ -32,6 +32,7 @@ pub(crate) trait Caching {
 /// `Cache` is the actual cache struct that caches data in memory
 /// for a given data file. All the data on disk for the given
 /// bounds `start` and `end` is loaded into `data`
+#[derive(Debug, PartialEq)]
 pub(crate) struct Cache {
     data: HashMap<String, String>,
     start: String,
@@ -40,8 +41,21 @@ pub(crate) struct Cache {
 
 impl Cache {
     /// Initializes a new Cache with the given `data`, and bounds (`start`, `end`)
-    fn new(data: &HashMap<String, String>, start: &str, end: &str) -> Cache {
-        todo!()
+    pub(crate) fn new(data: HashMap<String, String>, start: &str, end: &str) -> Cache {
+        Cache {
+            data,
+            start: start.to_string(),
+            end: end.to_string(),
+        }
+    }
+
+    /// Initializes a new empty Cache with start: "0", end: "0" and data as empty Hashmap
+    pub(crate) fn new_empty() -> Cache {
+        Cache {
+            data: Default::default(),
+            start: "0".to_string(),
+            end: "0".to_string(),
+        }
     }
 }
 
