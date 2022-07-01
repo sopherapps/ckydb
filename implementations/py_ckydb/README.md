@@ -12,7 +12,7 @@ It is read as 'skydb' This the python implementation of ckydb
 mkdir ckydb_example
 cd ckydb_example
 python3 -m venv env
-source env/bin/activae
+source env/bin/activate
 ```
 
 - Install ckydb
