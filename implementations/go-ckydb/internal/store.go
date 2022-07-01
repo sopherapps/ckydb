@@ -187,8 +187,8 @@ func (s *Store) Vacuum() error {
 		}
 	}
 
-	delFilePath := filepath.Join(s.dbPath, DelFilename)
-	_, err = os.Create(delFilePath)
+	// Clear del file
+	_, err = os.Create(s.delFilePath)
 	return err
 }
 
@@ -218,14 +218,12 @@ func (s *Store) loadFilePropsFromDisk() error {
 
 // createIndexFileIfNotExists creates the index file if it does not exist
 func (s *Store) createIndexFileIfNotExists() error {
-	indexFilePath := filepath.Join(s.dbPath, IndexFilename)
-	return CreateFileIfNotExist(indexFilePath)
+	return CreateFileIfNotExist(s.indexFilePath)
 }
 
 // createDelFileIfNotExists creates the index file if it does not exist
 func (s *Store) createDelFileIfNotExists() error {
-	delFilePath := filepath.Join(s.dbPath, DelFilename)
-	return CreateFileIfNotExist(delFilePath)
+	return CreateFileIfNotExist(s.delFilePath)
 }
 
 // createLogFileIfNotExists creates a new log file if it does not exist
@@ -262,8 +260,7 @@ func (s *Store) createNewLogFile() error {
 
 // loadIndexFromDisk loads the index from the index file
 func (s *Store) loadIndexFromDisk() error {
-	idxFilePath := filepath.Join(s.dbPath, IndexFilename)
-	data, err := os.ReadFile(idxFilePath)
+	data, err := os.ReadFile(s.indexFilePath)
 	if err != nil {
 		return err
 	}
@@ -279,8 +276,7 @@ func (s *Store) loadIndexFromDisk() error {
 
 // loadMemtableFromDisk loads the memtable from the current log file
 func (s *Store) loadMemtableFromDisk() error {
-	logFilePath := filepath.Join(s.dbPath, fmt.Sprintf("%s.%s", s.currentLogFile, LogFileExt))
-	data, err := os.ReadFile(logFilePath)
+	data, err := os.ReadFile(s.currentLogFilePath)
 	if err != nil {
 		return err
 	}
@@ -296,8 +292,7 @@ func (s *Store) loadMemtableFromDisk() error {
 
 // getKeysToDelete reads the del file and gets the keys to be deleted
 func (s *Store) getKeysToDelete() ([]string, error) {
-	delFilePath := filepath.Join(s.dbPath, DelFilename)
-	data, err := os.ReadFile(delFilePath)
+	data, err := os.ReadFile(s.delFilePath)
 	if err != nil {
 		return nil, err
 	}
