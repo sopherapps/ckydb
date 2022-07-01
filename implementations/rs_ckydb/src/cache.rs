@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// [remove]: Caching::remove
 /// [update]: Caching::update
 /// [get]: Caching::get
-trait Caching {
+pub(crate) trait Caching {
     /// Checks whether the passed `key` is within the cache's bounds
     fn is_in_range(&self, key: &str) -> bool;
 
