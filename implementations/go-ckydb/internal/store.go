@@ -333,6 +333,7 @@ func (s *Store) removeTimestampedKeyForKeyIfExists(key string) error {
 		return nil
 	}
 
+	delete(s.index, key)
 	return DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
 }
 
