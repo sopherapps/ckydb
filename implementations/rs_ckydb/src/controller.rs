@@ -128,7 +128,7 @@ impl Controller for Ckydb {
 
 impl Drop for Ckydb {
     fn drop(&mut self) {
-        self.close();
+        self.close().unwrap_or(());
     }
 }
 

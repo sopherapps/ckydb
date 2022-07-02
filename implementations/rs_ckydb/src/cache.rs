@@ -19,14 +19,14 @@ pub(crate) trait Caching {
     fn is_in_range(&self, key: &str) -> bool;
 
     /// Removes the value corresponding to the passed `key`
-    fn remove(&self, key: &str);
+    fn remove(&mut self, key: &str);
 
     /// Updates the value corresponding to the passed `key` with the
     /// given `value`
-    fn update(&self, key: &str, value: &str);
+    fn update(&mut self, key: &str, value: &str);
 
     /// Retrieves the value corresponding to the given `key`
-    fn get(&self, key: &str) -> String;
+    fn get(&self, key: &str) -> Option<&String>;
 }
 
 /// `Cache` is the actual cache struct that caches data in memory
@@ -34,9 +34,9 @@ pub(crate) trait Caching {
 /// bounds `start` and `end` is loaded into `data`
 #[derive(Debug, PartialEq)]
 pub(crate) struct Cache {
-    data: HashMap<String, String>,
-    start: String,
-    end: String,
+    pub data: HashMap<String, String>,
+    pub start: String,
+    pub end: String,
 }
 
 impl Cache {
@@ -61,18 +61,19 @@ impl Cache {
 
 impl Caching for Cache {
     fn is_in_range(&self, key: &str) -> bool {
-        todo!()
+        let key = key.to_string();
+        self.start <= key && key <= self.end
     }
 
-    fn remove(&self, key: &str) {
-        todo!()
+    fn remove(&mut self, key: &str) {
+        self.data.remove(key);
     }
 
-    fn update(&self, key: &str, value: &str) {
-        todo!()
+    fn update(&mut self, key: &str, value: &str) {
+        self.data.insert(key.to_string(), value.to_string());
     }
 
-    fn get(&self, key: &str) -> String {
-        todo!()
+    fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
     }
 }

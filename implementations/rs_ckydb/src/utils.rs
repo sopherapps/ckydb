@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
-use std::io::{self, ErrorKind, ErrorKind::NotFound};
+use std::io::{self, ErrorKind, ErrorKind::NotFound, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -126,6 +126,16 @@ pub(crate) fn create_file_if_not_exist<P: AsRef<Path>>(path: P) -> io::Result<()
         })
 }
 
+/// Appends the supplied content to the file
+///
+/// # Errors
+///
+/// See [fs::OpenOptions::open] and [std::io::Write::write_all]
+pub(crate) fn append_to_file<P: AsRef<Path>>(path: P, content: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new().write(true).append(true).open(path)?;
+    file.write_all(content.as_bytes())
+}
+
 /// Returns the current timestamp as a string.
 ///
 /// # Errors
@@ -214,4 +224,34 @@ fn has_any_of_prefixes(phrase: &str, prefixes: &Vec<String>) -> bool {
     }
 
     false
+}
+
+/// Overwrites the data in the file at pathToFile with the
+/// equivalent of the map data passed
+///
+/// # Errors
+///
+/// See [fs::write]
+pub(crate) fn persist_map_data_to_file<P: AsRef<Path>>(
+    data: &HashMap<String, String>,
+    path: P,
+) -> io::Result<()> {
+    let content = data.into_iter().fold("".to_string(), |accum, (k, v)| {
+        format!(
+            "{}{}{}{}{}",
+            accum, k, KEY_VALUE_SEPARATOR, v, TOKEN_SEPARATOR
+        )
+    });
+
+    fs::write(path, content)
+}
+
+/// Returns the size of the file at the given `path` in kilobytes
+///
+/// # Errors
+///
+/// See [std::fs::metadata]
+pub(crate) fn get_file_size<P: AsRef<Path>>(path: P) -> io::Result<f64> {
+    let file_size_in_bytes = fs::metadata(path)?.len();
+    Ok(file_size_in_bytes as f64 / 1024.0)
 }

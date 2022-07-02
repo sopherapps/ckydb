@@ -1,5 +1,7 @@
-use crate::cache::Cache;
-use crate::constants::{DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, LOG_FILE_EXT};
+use crate::cache::{Cache, Caching};
+use crate::constants::{
+    DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, LOG_FILE_EXT, TOKEN_SEPARATOR,
+};
 use crate::errors::{CorruptedDataError, NotFoundError};
 use crate::utils;
 use std::collections::HashMap;
@@ -38,7 +40,7 @@ pub(crate) trait Storage {
     /// - [CorruptedDataError] in case the data on disk is inconsistent with that in memory
     ///
     /// [CorruptedDataError]: crate::errors::CorruptedDataError
-    fn set(&self, key: &str, value: &str) -> Result<(), CorruptedDataError>;
+    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError>;
 
     /// Retrieves the value corresponding to the given key
     ///
@@ -103,8 +105,21 @@ impl Storage for Store {
         self.load_memtable_from_disk()
     }
 
-    fn set(&self, key: &str, value: &str) -> Result<(), CorruptedDataError> {
-        todo!()
+    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError> {
+        let timestamped_key = self.get_timestamped_key(key).or_else(|_| {
+            self.remove_timestamped_key_for_key_if_exists(key)
+                .unwrap_or(());
+            Err(CorruptedDataError)
+        })?;
+
+        self.save_key_value_pair(&timestamped_key, value)
+            .or_else(|_| {
+                self.delete_key_value_pair_if_exists(&timestamped_key)
+                    .unwrap_or(());
+                self.remove_timestamped_key_for_key_if_exists(key)
+                    .unwrap_or(());
+                Err(CorruptedDataError)
+            })
     }
 
     fn get(&self, key: &str) -> Result<String, NotFoundError> {
@@ -288,12 +303,203 @@ impl Store {
         let content = fs::read_to_string(&self.del_file_path)?;
         Ok(utils::extract_tokens_from_str(&content))
     }
+
+    /// Gets the timestamped key corresponding to the given key in the index
+    /// If there is none, it creates a new timestamped key and adds it to the index and the index file
+    ///
+    /// # Errors
+    ///
+    /// It will return a [CorruptedDataError] if it encounters any issues with creating timestamp
+    /// or adding it to the index file
+    ///
+    /// [CorruptedDataError]: crate::errors::CorruptedDataError
+    fn get_timestamped_key(&mut self, key: &str) -> io::Result<String> {
+        if let Some(k) = self.index.get(key) {
+            return Ok(k.to_string());
+        }
+
+        let timestamp = utils::get_current_timestamp_str()?;
+        let timestamped_key = format!("{}-{}", timestamp, key);
+        let new_file_entry = format!(
+            "{}{}{}{}",
+            key, KEY_VALUE_SEPARATOR, timestamped_key, TOKEN_SEPARATOR
+        );
+
+        self.index.insert(key.to_string(), timestamped_key.clone());
+        utils::append_to_file(&self.index_file_path, &new_file_entry)?;
+
+        Ok(timestamped_key)
+    }
+
+    /// Removes the key and timestamped key from the index
+    /// and the index file if it exists
+    ///
+    /// # Errors
+    ///
+    /// See [utils::delete_key_values_from_file]
+    fn remove_timestamped_key_for_key_if_exists(&mut self, key: &str) -> io::Result<()> {
+        if let Some(_) = self.index.get(key) {
+            self.index.remove(key);
+            utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])?;
+        }
+
+        Ok(())
+    }
+
+    /// Saves the key value pair in memtable and log file if it is newer than log file
+    /// or in cache and in the corresponding dataFile if the key is old
+    ///
+    /// # Error
+    ///
+    /// See [Store::save_key_value_pair_to_memtable], [Store::load_cache_containing_key],
+    /// [Store::save_key_value_pair_to_cache]
+    fn save_key_value_pair(&mut self, timestamped_key: &str, value: &str) -> io::Result<()> {
+        if timestamped_key.to_string() >= self.current_log_file {
+            return self.save_key_value_pair_to_memtable(timestamped_key, value);
+        }
+
+        if !self.cache.is_in_range(timestamped_key) {
+            self.load_cache_containing_key(timestamped_key)?;
+        }
+
+        self.save_key_value_pair_to_cache(timestamped_key, value)
+    }
+
+    /// Deletes the given key and its value from
+    /// the index, the cache or the memtable, the log file or any data file
+    ///
+    /// # Errors
+    ///
+    /// See [Store::persist_cache_to_disk] and [utils::persist_map_data_to_file]
+    fn delete_key_value_pair_if_exists(&mut self, key: &str) -> io::Result<()> {
+        if self.cache.is_in_range(key) {
+            self.cache.remove(key);
+            return self.persist_cache_to_disk();
+        }
+
+        if key.to_string() >= self.current_log_file {
+            self.memtable.remove(key);
+            return utils::persist_map_data_to_file(&self.memtable, &self.current_log_file_path);
+        }
+
+        Ok(())
+    }
+
+    /// Saves the key value pair to memtable and persists memtable
+    /// to current log file
+    ///
+    /// # Errors
+    ///
+    /// See [crate::utils::persist_map_data_to_file] and [Store::roll_log_file_if_too_big]
+    fn save_key_value_pair_to_memtable(
+        &mut self,
+        timestamped_key: &str,
+        value: &str,
+    ) -> io::Result<()> {
+        self.memtable
+            .insert(timestamped_key.to_string(), value.to_string());
+        utils::persist_map_data_to_file(&self.memtable, &self.current_log_file_path)?;
+        self.roll_log_file_if_too_big()
+    }
+
+    /// Saves the key value pair to cache and persists cache
+    /// to corresponding data file
+    ///
+    /// # Errors
+    ///
+    /// See [Store::persist_cache_to_disk]
+    fn save_key_value_pair_to_cache(
+        &mut self,
+        timestamped_key: &str,
+        value: &str,
+    ) -> io::Result<()> {
+        self.cache.update(timestamped_key, value);
+        self.persist_cache_to_disk()
+    }
+
+    /// Loads the cache with data containing the timestampedKey
+    ///
+    /// # Errors
+    ///
+    /// A [crate::errors::CorruptedDataError] will be returned if the key does not fall in
+    /// an of the ranges of timestamps represented by the data file names and the log file name.
+    /// Other errors may occur as seen in
+    /// [std::fs::read_to_string] and [utils::extract_key_values_from_str]
+    fn load_cache_containing_key(&mut self, key: &str) -> io::Result<()> {
+        let (start, end) = self.get_timestamp_range_for_key(key).ok_or(io::Error::new(
+            io::ErrorKind::InvalidData,
+            CorruptedDataError,
+        ))?;
+        // get data from disk
+        let file_path = self.db_path.join(format!("{}.{}", start, DATA_FILE_EXT));
+        let content_str = fs::read_to_string(&file_path)?;
+        let map_data = utils::extract_key_values_from_str(&content_str)?;
+
+        self.cache = Cache::new(map_data, &start, &end);
+        Ok(())
+    }
+
+    /// Rolls the current log file if it has exceeded the maximum size it should have
+    ///
+    /// # Errors
+    ///
+    /// See [crate::utils::get_file_size], [std::fs::rename] and [Store::create_new_log_file]
+    fn roll_log_file_if_too_big(&mut self) -> io::Result<()> {
+        let log_file_size = utils::get_file_size(&self.current_log_file_path)?;
+
+        if log_file_size >= self.max_file_size_kb {
+            let new_data_filename = format!("{}.{}", self.current_log_file, DATA_FILE_EXT);
+            fs::rename(
+                &self.current_log_file_path,
+                self.db_path.join(&new_data_filename),
+            )?;
+
+            self.memtable.clear();
+            self.data_files.push(new_data_filename);
+            // endure the data files are sorted
+            self.data_files.sort();
+            self.create_new_log_file()?;
+        }
+
+        Ok(())
+    }
+
+    /// Persists the current cache to its corresponding data file
+    ///
+    /// # Errors
+    ///
+    /// See [crate::utils::persist_map_data_to_file]
+    fn persist_cache_to_disk(&self) -> io::Result<()> {
+        let data_file_path = self
+            .db_path
+            .join(format!("{}.{}", self.cache.start, DATA_FILE_EXT));
+        utils::persist_map_data_to_file(&self.cache.data, &data_file_path)
+    }
+
+    /// Returns the range of timestamps between which
+    /// the key lies. The timestamps are got from the names of the data files and the current log file
+    /// It will return None if there is no relevant timestamp range from the available data file names
+    /// and log file names
+    fn get_timestamp_range_for_key(&self, key: &str) -> Option<(String, String)> {
+        let mut timestamps = self.data_files.clone();
+        timestamps.push(self.current_log_file.clone());
+        let key_as_string = key.to_string();
+
+        for i in 1..timestamps.len() {
+            let current = &timestamps[i];
+            if *current > key_as_string {
+                return Some((timestamps[i - 1].clone(), current.clone()));
+            }
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::cache::Cache;
-    use crate::constants::{DEL_FILENAME, INDEX_FILENAME};
+    use crate::cache::{Cache, Caching};
+    use crate::constants::{DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, TOKEN_SEPARATOR};
     use crate::store::{Storage, Store};
     use crate::utils;
     use serial_test::serial;
@@ -303,7 +509,6 @@ mod test {
     use std::path::Path;
 
     const DB_PATH: &str = "test_store_db";
-    const VACUUM_INTERVAL_SEC: f64 = 2.0;
     const MAX_FILE_SIZE_KB: f64 = 320.0 / 1024.0;
     const LOG_FILENAME: &str = "1655375171402014000.log";
     const DATA_FILES: [&str; 2] = ["1655375120328185000.cky", "1655375120328186000.cky"];
@@ -343,17 +548,9 @@ mod test {
         let index_file_path = db_path.join(INDEX_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
 
-        if let Err(err) = utils::clear_dummy_file_data_in_db(DB_PATH) {
-            panic!("error removing dummy data: {}", err)
-        }
-
-        if let Err(err) = utils::add_dummy_file_data_in_db(DB_PATH) {
-            panic!("error adding dummy data: {}", err)
-        }
-
-        if let Err(err) = store.load() {
-            panic!("error loading store: {}", err)
-        }
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
 
         assert_eq!(expected_cache, store.cache);
         assert_eq!(expected_memtable, store.memtable);
@@ -376,23 +573,14 @@ mod test {
         let del_file_path = db_path.join(DEL_FILENAME);
         let empty_map: HashMap<String, String> = Default::default();
 
-        if let Err(err) = utils::clear_dummy_file_data_in_db(DB_PATH) {
-            panic!("error removing dummy data: {}", err)
-        }
-
-        if let Err(err) = store.load() {
-            panic!("error loading store: {}", err)
-        }
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        store.load().expect("loads store");
 
         let current_log_filename = format!("{}.log", store.current_log_file);
         expected_files.push(current_log_filename.clone());
         let expected_log_file_path = OsString::from(Path::new(DB_PATH).join(current_log_filename));
-        let mut actual_files: Vec<String> = vec![];
-
-        match utils::get_file_names_in_folder(DB_PATH) {
-            Ok(files) => actual_files = files,
-            Err(err) => panic!("error getting files in folder: {}", err),
-        };
+        let mut actual_files =
+            utils::get_file_names_in_folder(DB_PATH).expect("get files in db folder");
 
         actual_files.sort();
         expected_files.sort();
@@ -410,15 +598,108 @@ mod test {
 
     #[test]
     #[serial]
-    fn set_new_key_adds_key_value_to_memtable_and_index_and_log_files() {}
+    fn set_new_key_adds_key_value_to_memtable_and_index_and_log_files() {
+        let (key, value) = ("New key", "foo");
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let db_path = Path::new(DB_PATH);
+        let index_file_path = db_path.join(INDEX_FILENAME);
+        let log_file_path = db_path.join(LOG_FILENAME);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+        store
+            .set(key, value)
+            .expect(&format!("set key: {}, value: {}", key, value));
+
+        // expected
+        let timestamped_key = store.index.get(key).unwrap();
+        let expected_index_file_entry = format!(
+            "{}{}{}{}",
+            key, KEY_VALUE_SEPARATOR, timestamped_key, TOKEN_SEPARATOR
+        );
+        let expected_log_file_entry = format!(
+            "{}{}{}{}",
+            timestamped_key, KEY_VALUE_SEPARATOR, value, TOKEN_SEPARATOR
+        );
+
+        // actual
+        let value_in_memtable = store.memtable.get(timestamped_key).unwrap();
+        let index_file_content = fs::read_to_string(index_file_path).expect("read index file");
+        let log_file_content = fs::read_to_string(log_file_path).expect("read log file");
+
+        assert_eq!(value, value_in_memtable);
+        assert!(index_file_content.contains(&expected_index_file_entry));
+        assert!(log_file_content.contains(&expected_log_file_entry));
+    }
 
     #[test]
     #[serial]
-    fn set_same_recent_key_updates_value_in_memtable_and_log_file() {}
+    fn set_same_recent_key_updates_value_in_memtable_and_log_file() {
+        let (key, value, new_value) = ("New key", "foo", "hello-world");
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let db_path = Path::new(DB_PATH);
+        let index_file_path = db_path.join(INDEX_FILENAME);
+        let log_file_path = db_path.join(LOG_FILENAME);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+        store
+            .set(key, value)
+            .expect(&format!("set key: {}, value: {}", key, value));
+        store
+            .set(key, new_value)
+            .expect(&format!("set key: {}, value: {}", key, new_value));
+
+        // expected
+        let timestamped_key = store.index.get(key).unwrap();
+        let expected_index_file_entry = format!(
+            "{}{}{}{}",
+            key, KEY_VALUE_SEPARATOR, timestamped_key, TOKEN_SEPARATOR
+        );
+        let expected_log_file_entry = format!(
+            "{}{}{}{}",
+            timestamped_key, KEY_VALUE_SEPARATOR, new_value, TOKEN_SEPARATOR
+        );
+
+        // actual
+        let value_in_memtable = store.memtable.get(timestamped_key).unwrap();
+        let index_file_content = fs::read_to_string(index_file_path).expect("read index file");
+        let log_file_content = fs::read_to_string(log_file_path).expect("read log file");
+
+        assert_eq!(new_value, value_in_memtable);
+        assert!(index_file_content.contains(&expected_index_file_entry));
+        assert!(log_file_content.contains(&expected_log_file_entry));
+    }
 
     #[test]
     #[serial]
-    fn set_old_key_updates_value_in_cache_and_in_cky_file() {}
+    fn set_old_key_updates_value_in_cache_and_in_cky_file() {
+        let (key, value) = ("cow", "foo-again");
+        let db_path = Path::new(DB_PATH);
+        let data_file_path = db_path.join(DATA_FILES[0]);
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+        store
+            .set(key, value)
+            .expect(&format!("set key: {}, value: {}", key, value));
+
+        // expected
+        let timestamped_key = store.index.get(key).unwrap();
+        let expected_data_file_entry =
+            format!("{}{}{}", timestamped_key, KEY_VALUE_SEPARATOR, value);
+
+        // actual
+        let value_in_cache = store.cache.get(timestamped_key).unwrap();
+        let data_file_content = fs::read_to_string(data_file_path).expect("read data file");
+
+        assert_eq!(value, value_in_cache);
+        assert!(data_file_content.contains(&expected_data_file_entry));
+    }
 
     #[test]
     #[serial]
