@@ -140,6 +140,15 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
 
+## Ideas For Improvement
+
+- [ ] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
+- [ ] Explicitly allow for conditional multiple concurrent writes (e.g. lock on key, not on store)
+- [ ] Distribute the database across different machines or nodes (
+    e.g. have multiple backend nodes, and let each node's timestamped key range be recorded on the
+     master/main/gateway node(s). The gateway nodes themselves could be replicated. Clients read/update
+     data through the gateway node)
+
 ## Acknowledgments
 
 - We can do nothing without God (John 15: 5). Glory be to Him.
