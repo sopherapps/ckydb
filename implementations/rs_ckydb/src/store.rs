@@ -46,9 +46,12 @@ pub(crate) trait Storage {
     ///
     /// # Errors
     /// - [NotFoundError] in case the key is not found in the store
+    /// - Panics with [CorruptedDataError] in case the data on disk is not
+    /// consistent with that in memory
     ///
     /// [NotFoundError]: crate::errors::NotFoundError
-    fn get(&self, key: &str) -> Result<String, NotFoundError>;
+    /// [CorruptedDataError]: crate::errors::CorruptedDataError
+    fn get(&mut self, key: &str) -> Result<String, NotFoundError>;
 
     /// Removes the key-value pair corresponding to the passed key
     ///
@@ -122,8 +125,11 @@ impl Storage for Store {
             })
     }
 
-    fn get(&self, key: &str) -> Result<String, NotFoundError> {
-        todo!()
+    fn get(&mut self, key: &str) -> Result<String, NotFoundError> {
+        let timestamped_key = self.index.get(key).ok_or(NotFoundError)?;
+        let timestamped_key = timestamped_key.clone();
+        self.get_value_for_key(&timestamped_key)
+            .or_else(|err| panic!("{}", err))
     }
 
     fn delete(&self, key: &str) -> Result<(), NotFoundError> {
@@ -494,6 +500,33 @@ impl Store {
 
         None
     }
+
+    /// Gets the value corresponding to a given timestampedKey
+    ///
+    /// # Errors
+    ///
+    /// It will return [crate::errors::CorruptedDataError] if the data on disk is inconsistent
+    /// with what is expected in memory e.g. if unable to load cache from disk, or cache or memtable
+    /// don't contain the key yet they should contain it.
+    ///
+    /// Obviously [crate::errors::CorruptedDataError] has a very minute chance of happening
+    fn get_value_for_key(&mut self, timestamped_key: &str) -> Result<String, CorruptedDataError> {
+        if timestamped_key.to_string() >= self.current_log_file {
+            let value = self
+                .memtable
+                .get(timestamped_key)
+                .ok_or(CorruptedDataError)?;
+            return Ok(value.to_string());
+        }
+
+        if !self.cache.is_in_range(timestamped_key) {
+            self.load_cache_containing_key(timestamped_key)
+                .or(Err(CorruptedDataError))?;
+        }
+
+        let value = self.cache.get(timestamped_key).ok_or(CorruptedDataError)?;
+        Ok(value.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -703,19 +736,90 @@ mod test {
 
     #[test]
     #[serial]
-    fn get_new_key_gets_value_from_memtable() {}
+    fn get_new_key_gets_value_from_memtable() {
+        let (key, expected_value) = ("fish", "8990 months");
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+
+        // remove the database files to show data is got straight from memory
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+
+        let actual_value = store.get(key).unwrap();
+        assert_eq!(actual_value, expected_value);
+    }
 
     #[test]
     #[serial]
-    fn get_old_key_updates_cache_from_disk_and_gets_value_from_cache() {}
+    fn get_old_key_updates_cache_from_disk_and_gets_value_from_cache() {
+        let (key, expected_value) = ("cow", "500 months");
+        let expected_initial_cache = Cache::new_empty();
+        let expected_final_cache = Cache::new(
+            HashMap::from([
+                (
+                    String::from("1655375120328185000-cow"),
+                    String::from("500 months"),
+                ),
+                (
+                    String::from("1655375120328185100-dog"),
+                    String::from("23 months"),
+                ),
+            ]),
+            DATA_FILES[0].trim_end_matches(".cky"),
+            DATA_FILES[1].trim_end_matches(".cky"),
+        );
+
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+
+        let initial_cache = store.cache.clone();
+        let value = store.get(key).unwrap();
+        let final_cache = store.cache.clone();
+
+        assert_eq!(expected_value, value);
+        assert_eq!(expected_initial_cache, initial_cache);
+        assert_eq!(expected_final_cache, final_cache);
+    }
 
     #[test]
     #[serial]
-    fn get_old_key_again_gets_value_straight_from_cache() {}
+    fn get_old_key_again_gets_value_straight_from_cache() {
+        let (key, expected_value) = ("cow", "500 months");
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data to db");
+        store.load().expect("loads store");
+
+        let _ = store.get(key).unwrap();
+
+        // remove the database files to show data is got straight from memory on next get
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+
+        let value = store.get(key).unwrap();
+
+        assert_eq!(expected_value, value);
+    }
 
     #[test]
     #[serial]
-    fn get_non_existent_key_returns_not_found_error() {}
+    fn get_non_existent_key_returns_not_found_error() {
+        let key = "non-existent";
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        store.load().expect("loads store");
+
+        match store.get(key) {
+            Ok(_) => panic!("error was expected"),
+            Err(err) => assert!(err.to_string().contains("not found")),
+        }
+    }
 
     #[test]
     #[serial]

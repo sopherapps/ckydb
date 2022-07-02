@@ -32,7 +32,7 @@ pub(crate) trait Caching {
 /// `Cache` is the actual cache struct that caches data in memory
 /// for a given data file. All the data on disk for the given
 /// bounds `start` and `end` is loaded into `data`
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Cache {
     pub data: HashMap<String, String>,
     pub start: String,
