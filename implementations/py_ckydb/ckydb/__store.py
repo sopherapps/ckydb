@@ -163,19 +163,24 @@ class Store:
         with open(path, "w") as f:
             f.write(content)
 
-    def __save_key_value_pair(self, key: str, value: str):
+    def __save_key_value_pair(self, key: str, value: str) -> str:
         """
         Saves the given key value pair in memtable and in the log file
         :param key:
         :param value:
+        :returns str: old value
         """
+        old_value = None
+
         if key >= self._current_log_file:
+            old_value = self._memtable.get(key, None)
             self.__update_memtable_on_disk({key: value})
             self._memtable[key] = value
             self.__roll_log_file_if_too_big()
 
         elif self._cache.is_in_range(key):
             with self.__cache_lock:
+                old_value = self._cache.data[key]
                 self.__persist_cache_to_disk({key: value})
                 self._cache.update(key, value)
 
@@ -186,8 +191,11 @@ class Store:
 
             with self.__cache_lock:
                 self.__load_cache_for_timestamp_range(timestamp_range)
+                old_value = self._cache.data[key]
                 self.__persist_cache_to_disk({key: value})
                 self._cache.update(key, value)
+
+        return old_value
 
     def __delete_key_value_pair(self, key: str):
         """
