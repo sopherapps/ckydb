@@ -3,9 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/sopherapps/ckydb/implementations/go-ckydb"
 	"log"
 	"path/filepath"
+
+	"github.com/sopherapps/ckydb/implementations/go-ckydb"
 )
 
 func main() {

@@ -30,7 +30,7 @@ type Ckydb struct {
 	store             internal.Storage
 	vacuumIntervalSec float64
 	isOpen            bool
-	lock              sync.Mutex
+	mutLock           sync.Mutex
 }
 
 // Connect creates a new Ckydb instance, starts its background tasks and returns it
@@ -74,8 +74,8 @@ func (c *Ckydb) Open() error {
 	}
 
 	vacuumTask := internal.NewTask(time.Second*time.Duration(c.vacuumIntervalSec), func() {
-		c.lock.Lock()
-		defer c.lock.Unlock()
+		c.mutLock.Lock()
+		defer c.mutLock.Unlock()
 
 		err := c.store.Vacuum()
 		if err != nil {
@@ -113,8 +113,8 @@ func (c *Ckydb) Close() error {
 // Set adds or updates the value corresponding to the given key in store
 // It might return an ErrCorruptedData error but if it succeeds, no error is returned
 func (c *Ckydb) Set(key string, value string) error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mutLock.Lock()
+	defer c.mutLock.Unlock()
 
 	return c.store.Set(key, value)
 }
@@ -122,25 +122,22 @@ func (c *Ckydb) Set(key string, value string) error {
 // Get retrieves the value corresponding to the given key
 // It returns a ErrNotFound error if the key is nonexistent
 func (c *Ckydb) Get(key string) (string, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
 	return c.store.Get(key)
 }
 
 // Delete removes the key-value pair corresponding to the passed key
 // It returns an ErrNotFound error if the key is nonexistent
 func (c *Ckydb) Delete(key string) error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mutLock.Lock()
+	defer c.mutLock.Unlock()
 
 	return c.store.Delete(key)
 }
 
 // Clear resets the entire Store, and clears everything on disk
 func (c *Ckydb) Clear() error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mutLock.Lock()
+	defer c.mutLock.Unlock()
 
 	return c.store.Clear()
 }

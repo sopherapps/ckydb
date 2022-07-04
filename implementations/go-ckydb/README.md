@@ -275,6 +275,31 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
 
+## Ideas For Improvement
+
+- [ ] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
+- [ ] Explicitly allow for conditional multiple concurrent writes (e.g. lock on key, not on store)
+- [ ] Distribute the database across different machines or nodes (
+    e.g. have multiple backend nodes, and let each node's timestamped key range be recorded on the
+     master/main/gateway node(s). The gateway nodes themselves could be replicated. Clients read/update
+     data through the gateway node)
+
+### Multiple Concurrent Reads, Single Writes at a time
+
+- Have no lock on the main routine of `ckydb.Get`.
+  `ckydb.Get` has props `index`, `memtable` and `cache` as its source of truth.
+- To avoid using a stale `cache` and yet also avoid data races between `store.Set` and `store.Get`, both,
+  of old keys, we have a `cacheLock` lock.
+  This lock is to be obtained by either `store.Get` or `store.Set` both for old keys
+- Have the same `mutLock` lock on the `ckydb.Delete` and `ckydb.Set`.
+  If you had separate locks, there would be chance for a data race.
+- For `ckydb.Clear`, update `index` **first**.
+- For `ckydb.Delete`, update `index` **last**.
+- For `ckydb.Set` of a new key (i.e. not an update), update `index` **last**.
+- For `ckydb.Set` of pre-existing key, update `memtable` or `cache` **last** as index would already be up-to-date.
+- For `store.vacuum` task and `store.Delete`, there will be a `delFileLock` within store to avoid conflicts.
+
+
 ## Acknowledgments
 
 - We can do nothing without God (John 15: 5). Glory be to Him.

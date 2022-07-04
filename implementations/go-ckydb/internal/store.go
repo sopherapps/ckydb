@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,6 +41,8 @@ type Store struct {
 	currentLogFilePath string
 	delFilePath        string
 	indexFilePath      string
+	cacheLock          sync.Mutex
+	delFileLock        sync.Mutex
 }
 
 // NewStore initializes a new Store instance for the given dbPath
@@ -97,17 +100,26 @@ func (s *Store) Load() error {
 // Set adds or updates the value corresponding to the given key in store
 // It might return an ErrCorruptedData error but if it succeeds, no error is returned
 func (s *Store) Set(key string, value string) error {
-	timestampedKey, err := s.getTimestampedKey(key)
+	timestampedKey, isNewKey, err := s.getTimestampedKey(key)
 	if err != nil {
 		_ = s.removeTimestampedKeyForKeyIfExists(key)
 		return err
 	}
 
-	err = s.saveKeyValuePair(timestampedKey, value)
+	oldValue, err := s.saveKeyValuePair(timestampedKey, value)
 	if err != nil {
-		_ = s.deleteKeyValuePairIfExists(timestampedKey)
-		_ = s.removeTimestampedKeyForKeyIfExists(key)
+		if isNewKey {
+			_ = s.deleteKeyValuePairIfExists(timestampedKey)
+			_ = s.removeTimestampedKeyForKeyIfExists(key)
+			return err
+		}
+
+		_, _ = s.saveKeyValuePair(timestampedKey, oldValue)
 		return err
+	}
+
+	if isNewKey {
+		s.index[key] = timestampedKey
 	}
 
 	return nil
@@ -132,11 +144,13 @@ func (s *Store) Delete(key string) error {
 		return ErrNotFound
 	}
 
-	delete(s.index, key)
-	err := PersistMapDataToFile(s.index, s.indexFilePath)
+	err := DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
 	if err != nil {
 		return err
 	}
+
+	s.delFileLock.Lock()
+	defer s.delFileLock.Unlock()
 
 	f, err := os.OpenFile(s.delFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 	if err != nil {
@@ -145,11 +159,17 @@ func (s *Store) Delete(key string) error {
 	defer func() { _ = f.Close() }()
 
 	_, err = f.WriteString(fmt.Sprintf("%s%s", timestampedKey, TokenSeparator))
-	return err
+	if err != nil {
+		return err
+	}
+
+	delete(s.index, key)
+	return nil
 }
 
 // Clear resets the entire Store, and clears everything on disk
 func (s *Store) Clear() error {
+	s.index = nil
 	err := s.clearDisk()
 	if err != nil {
 		return err
@@ -161,6 +181,9 @@ func (s *Store) Clear() error {
 // Vacuum deletes all key-value pairs that have been previously marked for 'delete'
 // when store.Delete(key) was called on them.
 func (s *Store) Vacuum() error {
+	s.delFileLock.Lock()
+	defer s.delFileLock.Unlock()
+
 	keysToDelete, err := s.getKeysToDelete()
 	if err != nil {
 		return err
@@ -301,53 +324,56 @@ func (s *Store) getKeysToDelete() ([]string, error) {
 }
 
 // getTimestampedKey gets the timestamped key corresponding to the given key in the index
-// If there is none, it creates a new timestamped key and adds it to the index and the index file
-func (s *Store) getTimestampedKey(key string) (string, error) {
+// If there is none, it creates a new timestamped key and adds it to the index file
+func (s *Store) getTimestampedKey(key string) (string, bool, error) {
+	isNewKey := false
 	timestampedKey, ok := s.index[key]
 
 	if !ok {
+		isNewKey = true
 		timestampedKey = fmt.Sprintf("%d-%s", time.Now().UnixNano(), key)
-		s.index[key] = timestampedKey
 
 		f, err := os.OpenFile(s.indexFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0777)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		defer func() { _ = f.Close() }()
 
 		data := fmt.Sprintf("%s%s%s%s", key, KeyValueSeparator, timestampedKey, TokenSeparator)
 		_, err = f.WriteString(data)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 
-	return timestampedKey, nil
+	return timestampedKey, isNewKey, nil
 }
 
-// removeTimestampedKeyForKeyIfExists removes the key and timestamped key from the index
-// and the index file if it exists
+// removeTimestampedKeyForKeyIfExists removes the key and timestamped key from
+// the index file if it exists
 func (s *Store) removeTimestampedKeyForKeyIfExists(key string) error {
 	_, ok := s.index[key]
 	if !ok {
 		return nil
 	}
 
-	delete(s.index, key)
 	return DeleteKeyValuesFromFile(s.indexFilePath, []string{key})
 }
 
 // saveKeyValuePair saves the key value pair in memtable and log file if it is newer than log file
 // or in cache and in the corresponding dataFile if the key is old
-func (s *Store) saveKeyValuePair(timestampedKey string, value string) error {
+func (s *Store) saveKeyValuePair(timestampedKey string, value string) (string, error) {
 	if timestampedKey >= s.currentLogFile {
 		return s.saveKeyValueToMemtable(timestampedKey, value)
 	}
 
+	s.cacheLock.Lock()
+	defer s.cacheLock.Unlock()
+
 	if !s.cache.IsInRange(timestampedKey) {
 		err := s.loadCacheContainingKey(timestampedKey)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 
@@ -356,28 +382,42 @@ func (s *Store) saveKeyValuePair(timestampedKey string, value string) error {
 
 // saveKeyValueToMemtable saves the key value pair to memtable and persists memtable
 // to current log file
-func (s *Store) saveKeyValueToMemtable(timestampedKey string, value string) error {
-	s.memtable[timestampedKey] = value
-	err := PersistMapDataToFile(s.memtable, s.currentLogFilePath)
+func (s *Store) saveKeyValueToMemtable(timestampedKey string, value string) (string, error) {
+	oldValue := s.memtable[timestampedKey]
+	data := map[string]string{}
+	for k, v := range s.memtable {
+		data[k] = v
+	}
+	data[timestampedKey] = value
+
+	err := PersistMapDataToFile(data, s.currentLogFilePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 
+	s.memtable[timestampedKey] = value
 	err = s.rollLogFileIfTooBig()
-	return err
+	return oldValue, err
 }
 
 // saveKeyValueToCache saves the key value pair to cache and persists cache
 // to corresponding data file
-func (s *Store) saveKeyValueToCache(timestampedKey string, value string) error {
-	s.cache.Update(timestampedKey, value)
-	return s.persistCacheToDisk()
-}
+func (s *Store) saveKeyValueToCache(timestampedKey string, value string) (string, error) {
+	oldValue := s.cache.data[timestampedKey]
+	data := map[string]string{}
+	for k, v := range s.cache.data {
+		data[k] = v
+	}
+	data[timestampedKey] = value
 
-// persistCacheToDisk persists the current cache to its corresponding data file
-func (s *Store) persistCacheToDisk() error {
 	dataFilePath := filepath.Join(s.dbPath, fmt.Sprintf("%s.%s", s.cache.start, DataFileExt))
-	return PersistMapDataToFile(s.cache.data, dataFilePath)
+	err := PersistMapDataToFile(data, dataFilePath)
+	if err != nil {
+		return "", err
+	}
+
+	s.cache.Update(timestampedKey, value)
+	return oldValue, nil
 }
 
 // rollLogFileIfTooBig rolls the log file if it has exceeded the maximum size it should have
@@ -447,11 +487,12 @@ func (s *Store) loadCacheContainingKey(timestampedKey string) error {
 }
 
 // deleteKeyValuePairIfExists deletes the given key value pair from
-// the index, the cache or the memtable, the log file or any data file
+// the memtable, the log file or any data file
 func (s *Store) deleteKeyValuePairIfExists(timestampedKey string) error {
 	if s.cache.IsInRange(timestampedKey) {
 		s.cache.Remove(timestampedKey)
-		return s.persistCacheToDisk()
+		dataFilePath := filepath.Join(s.dbPath, fmt.Sprintf("%s.%s", s.cache.start, DataFileExt))
+		return PersistMapDataToFile(s.cache.data, dataFilePath)
 	}
 
 	if timestampedKey >= s.currentLogFile {
@@ -471,6 +512,9 @@ func (s *Store) getValueForKey(timestampedKey string) (string, error) {
 
 		return "", ErrCorruptedData
 	}
+
+	s.cacheLock.Lock()
+	defer s.cacheLock.Unlock()
 
 	if !s.cache.IsInRange(timestampedKey) {
 		err := s.loadCacheContainingKey(timestampedKey)
