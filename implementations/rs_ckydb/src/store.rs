@@ -59,7 +59,7 @@ pub(crate) trait Storage {
     /// - [NotFoundError] in case the key is not found in the store
     ///
     /// [NotFoundError]: crate::errors::NotFoundError
-    fn delete(&self, key: &str) -> Result<(), NotFoundError>;
+    fn delete(&mut self, key: &str) -> Result<(), NotFoundError>;
 
     /// Resets the entire Store, and clears everything on disk
     ///
@@ -132,8 +132,20 @@ impl Storage for Store {
             .or_else(|err| panic!("{}", err))
     }
 
-    fn delete(&self, key: &str) -> Result<(), NotFoundError> {
-        todo!()
+    fn delete(&mut self, key: &str) -> Result<(), NotFoundError> {
+        let timestamped_key = self.index.get(key).ok_or(NotFoundError)?;
+
+        utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])
+            .unwrap_or_else(|_| panic!("{}", CorruptedDataError));
+
+        let new_file_entry = format!("{}{}", timestamped_key, TOKEN_SEPARATOR);
+
+        utils::append_to_file(&self.del_file_path, &new_file_entry)
+            .unwrap_or_else(|_| panic!("{}", CorruptedDataError));
+
+        self.index.remove(key);
+
+        Ok(())
     }
 
     fn clear(&self) -> io::Result<()> {
@@ -823,11 +835,56 @@ mod test {
 
     #[test]
     #[serial]
-    fn delete_key_removes_key_from_index_and_adds_it_to_del_file() {}
+    fn delete_key_removes_key_from_index_and_adds_it_to_del_file() {
+        let key = "pig";
+        let expected_index = HashMap::from([
+            (String::from("cow"), String::from("1655375120328185000-cow")),
+            (String::from("dog"), String::from("1655375120328185100-dog")),
+            (String::from("goat"), String::from("1655404770518678-goat")),
+            (String::from("hen"), String::from("1655404670510698-hen")),
+            (String::from("fish"), String::from("1655403775538278-fish")),
+        ]);
+        let expected_keys_marked_for_delete = vec!["1655404770534578-pig"];
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let db_path = Path::new(DB_PATH);
+        let index_file_path = db_path.join(INDEX_FILENAME);
+        let del_file_path = db_path.join(DEL_FILENAME);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data in db");
+        store.load().expect("loads store");
+        store.delete(key).expect(&format!("delete {}", key));
+
+        let idx_file_content = fs::read_to_string(index_file_path).expect("read index file");
+        let del_file_content = fs::read_to_string(del_file_path).expect("read del file");
+        let map_from_idx_file = utils::extract_key_values_from_str(&idx_file_content)
+            .expect("extract key values from index");
+        let list_from_del_file = utils::extract_tokens_from_str(&del_file_content);
+
+        match store.get(key) {
+            Ok(_) => panic!("error was expected"),
+            Err(err) => assert!(err.to_string().contains("not found")),
+        }
+
+        assert_eq!(expected_index, map_from_idx_file);
+        assert_eq!(expected_keys_marked_for_delete, list_from_del_file);
+        assert_eq!(expected_index, store.index);
+    }
 
     #[test]
     #[serial]
-    fn delete_non_existent_key_returns_not_found_error() {}
+    fn delete_non_existent_key_returns_not_found_error() {
+        let key = "non-existent";
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        store.load().expect("loads store");
+
+        match store.delete(key) {
+            Ok(_) => panic!("error was expected"),
+            Err(err) => assert!(err.to_string().contains("not found")),
+        }
+    }
 
     #[test]
     #[serial]
