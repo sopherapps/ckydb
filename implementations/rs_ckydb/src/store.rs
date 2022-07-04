@@ -68,7 +68,7 @@ pub(crate) trait Storage {
     /// is not accessible
     ///
     /// [io::Error]: std::io::Error
-    fn clear(&self) -> io::Result<()>;
+    fn clear(&mut self) -> io::Result<()>;
 
     /// Deletes all key-value pairs that have been previously marked for 'delete'
     /// when store.Delete(key) was called on them.
@@ -148,8 +148,10 @@ impl Storage for Store {
         Ok(())
     }
 
-    fn clear(&self) -> io::Result<()> {
-        todo!()
+    fn clear(&mut self) -> io::Result<()> {
+        self.index.clear();
+        self.clear_disk()?;
+        self.load()
     }
 
     fn vacuum(&self) -> io::Result<()> {
@@ -539,6 +541,15 @@ impl Store {
         let value = self.cache.get(timestamped_key).ok_or(CorruptedDataError)?;
         Ok(value.to_string())
     }
+
+    /// Deletes all files in the database folder
+    ///
+    /// # Errors
+    ///
+    /// See [fs::remove_dir_all]
+    fn clear_disk(&self) -> io::Result<()> {
+        fs::remove_dir_all(&self.db_path)
+    }
 }
 
 #[cfg(test)]
@@ -888,7 +899,39 @@ mod test {
 
     #[test]
     #[serial]
-    fn clear_deletes_all_data_on_disk_and_resets_memory_props() {}
+    fn clear_deletes_all_data_on_disk_and_resets_memory_props() {
+        let expected_cache = Cache::new_empty();
+        let mut expected_files = vec![DEL_FILENAME.to_string(), INDEX_FILENAME.to_string()];
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let db_path = Path::new(DB_PATH);
+        let index_file_path = db_path.join(INDEX_FILENAME);
+        let del_file_path = db_path.join(DEL_FILENAME);
+        let empty_map: HashMap<String, String> = Default::default();
+        let empty_list: Vec<String> = Default::default();
+
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data in db");
+        store.load().expect("loads store");
+        store.clear().expect("clear");
+
+        let current_log_filename = format!("{}.log", store.current_log_file);
+        let expected_current_log_file_path = db_path.join(&current_log_filename);
+        expected_files.push(current_log_filename);
+        let mut actual_files =
+            utils::get_file_names_in_folder(db_path).expect("get files in db folder");
+        expected_files.sort();
+        actual_files.sort();
+
+        assert_eq!(expected_cache, store.cache);
+        assert_ne!("".to_string(), store.current_log_file);
+        assert_eq!(empty_map, store.index);
+        assert_eq!(empty_map, store.memtable);
+        assert_eq!(empty_list, store.data_files);
+        assert_eq!(expected_files, actual_files);
+        assert_eq!(index_file_path, store.index_file_path);
+        assert_eq!(expected_current_log_file_path, store.current_log_file_path);
+        assert_eq!(del_file_path, store.del_file_path);
+    }
 
     #[test]
     #[serial]
