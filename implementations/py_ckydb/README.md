@@ -213,6 +213,28 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 **Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
 weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
+## Ideas For Improvement
+
+- [x] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
+- [ ] Explicitly allow for conditional multiple concurrent writes (e.g. lock on key, not on store)
+- [ ] Distribute the database across different machines or nodes (
+  e.g. have multiple backend nodes, and let each node's timestamped key range be recorded on the master/main/gateway
+  node(s). The gateway nodes themselves could be replicated. Clients read/update data through the gateway node)
+
+### Multiple Concurrent Reads, Single Writes at a time
+
+- Have no lock on the main routine of `ckydb.get`.
+  `ckydb.get` has props `index`, `memtable` and `cache` as its source of truth.
+- To avoid using a stale `cache` and yet also avoid data races between `store.set` and `store.get`, both, of old keys,
+  we have a `cache_lock` lock. This lock is to be obtained by either `store.get` or `store.set` both for old keys
+- Have the same `mut_lock` lock on the `ckydb.delete` and `ckydb.set`. If you had separate locks, there would be chance
+  for a data race.
+- For `ckydb.clear`, update `index` **first**.
+- For `ckydb.delete`, update `index` **last**.
+- For `ckydb.set` of a new key (i.e. not an update), update `index` **last**.
+- For `ckydb.set` of pre-existing key, update `memtable` or `cache` **last** as index would already be up-to-date.
+- For `store.vacuum` task and `store.delete`, there will be a `del_file_lock` within store to avoid conflicts.
+
 ## Acknowledgments
 
 - We can do nothing without God (John 15: 5). Glory be to Him.

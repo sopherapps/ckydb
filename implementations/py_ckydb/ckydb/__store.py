@@ -1,6 +1,7 @@
 """
 Module containing the actual store representation
 """
+import multiprocessing as mp
 import os
 import shutil
 import time
@@ -30,6 +31,8 @@ class Store:
         self._memtable: Dict[str, str] = {}
         self._data_files: List[str] = []
         self._current_log_file: str = ""
+        self.__del_file_lock: mp.synchronize.Lock = mp.Lock()
+        self.__cache_lock: mp.synchronize.Lock = mp.Lock()
 
     def __eq__(self, other) -> bool:
         return (self.__db_path == other.__db_path
@@ -62,13 +65,24 @@ class Store:
         :param v: the value to set
         """
         timestamped_key = None
+        is_new_key = False
+        old_value = None
 
         try:
-            timestamped_key = self.__get_timestamped_key(k)
-            self.__save_key_value_pair(key=timestamped_key, value=v)
+            timestamped_key, is_new_key = self.__get_timestamped_key(k)
+            old_value = self.__save_key_value_pair(key=timestamped_key, value=v)
+            if is_new_key:
+                self._index[k] = timestamped_key
         except Exception:
-            self.__delete_key_value_pair(key=timestamped_key)
-            self.__remove_timestamped_key(k)
+            try:
+                if is_new_key:
+                    self._index.pop(key=k)
+                    self.__delete_key_value_pair(key=timestamped_key)
+                    self.__remove_timestamped_key(key=k, timestamped_key=timestamped_key)
+                else:
+                    self.__save_key_value_pair(key=timestamped_key, value=old_value)
+            except:
+                pass
 
     def get(self, k: str) -> str:
         """
@@ -104,6 +118,7 @@ class Store:
         Clears all the data in the database including that on disk and that
         in memory
         """
+        self._index = {}
         self.__clear_disk()
         self.load()
 
@@ -113,20 +128,21 @@ class Store:
         ".cky" and ".log" files and then removes them from
         ".del" file
         """
-        keys_to_delete = self.__get_keys_to_delete()
-        if len(keys_to_delete) == 0:
-            return
+        with self.__del_file_lock:
+            keys_to_delete = self.__get_keys_to_delete()
+            if len(keys_to_delete) == 0:
+                return
 
-        data_files = os.listdir(self.__db_path)
-        for file in data_files:
-            if file == self.__del_filename or file == self.__index_filename:
-                continue
+            data_files = os.listdir(self.__db_path)
+            for file in data_files:
+                if file == self.__del_filename or file == self.__index_filename:
+                    continue
 
-            path = os.path.join(self.__db_path, file)
-            self.__delete_key_values_from_file(path, keys_to_delete)
+                path = os.path.join(self.__db_path, file)
+                self.__delete_key_values_from_file(path, keys_to_delete)
 
-        with open(self.__del_file_path, "w") as f:
-            pass
+            with open(self.__del_file_path, "w") as f:
+                pass
 
     def __delete_key_values_from_file(self, path: str, keys: List[str]):
         """
@@ -154,22 +170,24 @@ class Store:
         :param value:
         """
         if key >= self._current_log_file:
+            self.__update_memtable_on_disk({key: value})
             self._memtable[key] = value
-            self.__persist_memtable_to_disk()
             self.__roll_log_file_if_too_big()
 
         elif self._cache.is_in_range(key):
-            self._cache.update(key, value)
-            self.__persist_cache_to_disk()
+            with self.__cache_lock:
+                self.__persist_cache_to_disk({key: value})
+                self._cache.update(key, value)
 
         else:
             timestamp_range = self.__get_timestamp_range_for_key(key)
             if timestamp_range is None:
                 raise CorruptedDataError()
 
-            self.__load_cache_for_timestamp_range(timestamp_range)
-            self._cache.update(key, value)
-            self.__persist_cache_to_disk()
+            with self.__cache_lock:
+                self.__load_cache_for_timestamp_range(timestamp_range)
+                self.__persist_cache_to_disk({key: value})
+                self._cache.update(key, value)
 
     def __delete_key_value_pair(self, key: str):
         """
@@ -178,10 +196,10 @@ class Store:
         """
         if self._cache.is_in_range(key):
             self._cache.remove(key)
-            self.__persist_cache_to_disk()
+            self.__persist_cache_to_disk({})
         elif key >= self._current_log_file:
             self._memtable.pop(key)
-            self.__persist_memtable_to_disk()
+            self.__update_memtable_on_disk({})
 
     def __get_keys_to_delete(self) -> List[str]:
         """
@@ -280,46 +298,46 @@ class Store:
         """
         shutil.rmtree(self.__db_path, ignore_errors=True)
 
-    def __get_timestamped_key(self, key: str) -> str:
+    def __get_timestamped_key(self, key: str) -> Tuple[str, bool]:
         """
         Gets the timestamped key from index or generates one if not exists and adds it to index file
+        It returns a tuple of the timestamped key and whether it is a new key
 
         :param key: - the key to be timestamped
-        :return: str - the timestamped key
+        :return: Tuple[str, bool] - the timestamped key, and whether key is new
         """
+        is_new_key = False
         timestamped_key = self._index.get(key, None)
+
         if timestamped_key is None:
+            is_new_key = True
             timestamped_key = f"{time.time_ns()}-{key}"
-            self._index[key] = timestamped_key
 
             with open(self.__index_file_path, "a") as f:
                 f.write(f"{key}{self._key_value_separator}{timestamped_key}{self._token_separator}")
 
-        return timestamped_key
+        return timestamped_key, is_new_key
 
-    def __remove_timestamped_key(self, key: str):
+    def __remove_timestamped_key(self, key: str, timestamped_key: str):
         """
         Reverse of __get_timestamped_key
-        Removes the key from index and from index file
+        Removes the key from index file
 
         :param key: - the key to be removed from the index file
+        :param timestamped_key: - the timestamped key to be removed from the index file
         """
-        timestamped_key = self._index.pop(key, None)
-        if timestamped_key is None:
-            return
-
         with open(self.__index_file_path, "r+") as f:
             content = "\n".join(f.readlines())
             key_timestamped_key_pair = f"{key}{self._key_value_separator}{timestamped_key}{self._token_separator}"
             f.write(content.replace(key_timestamped_key_pair, ""))
 
-    def __persist_memtable_to_disk(self):
-        """Persists the current memtable to disk"""
-        self.__persist_data_to_file(data=self._memtable, filename=f"{self._current_log_file}.log")
+    def __update_memtable_on_disk(self, update: Dict[str, str]):
+        """Persists the current memtable to disk with new update"""
+        self.__persist_data_to_file(data={**self._memtable, **update}, filename=f"{self._current_log_file}.log")
 
-    def __persist_cache_to_disk(self):
+    def __persist_cache_to_disk(self, update: Dict[str, str]):
         """Persists the current cache to disk"""
-        self.__persist_data_to_file(data=self._cache.data, filename=f"{self._cache.start}.cky")
+        self.__persist_data_to_file(data={**self._cache.data, **update}, filename=f"{self._cache.start}.cky")
 
     def __persist_data_to_file(self, data: Dict[str, str], filename: str):
         """
@@ -373,14 +391,16 @@ class Store:
         if timestamped_key >= self._current_log_file:
             return self._memtable.get(timestamped_key, None)
         elif self._cache.is_in_range(timestamped_key):
-            return self._cache.data.get(timestamped_key, None)
+            with self.__cache_lock:
+                return self._cache.data.get(timestamped_key, None)
         else:
             timestamp_range = self.__get_timestamp_range_for_key(timestamped_key)
             if timestamp_range is None:
                 return None
 
-            self.__load_cache_for_timestamp_range(timestamp_range)
-            return self._cache.data.get(timestamped_key, None)
+            with self.__cache_lock:
+                self.__load_cache_for_timestamp_range(timestamp_range)
+                return self._cache.data.get(timestamped_key, None)
 
     def __mark_key_for_deletion(self, key: str):
         """
@@ -390,14 +410,18 @@ class Store:
         :param key: - the key to be marked for deletion
         :raises NotFoundError: if key is not in index
         """
-        timestamped_key = self._index.pop(key, None)
+        index = self._index.copy()
+        timestamped_key = index.pop(key, None)
         if timestamped_key is None:
             raise NotFoundError()
 
-        self.__persist_data_to_file(self._index, self.__index_filename)
+        self.__persist_data_to_file(index, self.__index_filename)
 
-        with open(self.__del_file_path, "a") as f:
-            f.write(f"{timestamped_key}{self._token_separator}")
+        with self.__del_file_lock:
+            with open(self.__del_file_path, "a") as f:
+                f.write(f"{timestamped_key}{self._token_separator}")
+
+        self._index = index
 
     def __roll_log_file_if_too_big(self):
         """Rolls the current log file in case its size has exceeded the max file size in kilobytes"""
