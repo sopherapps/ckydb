@@ -38,5 +38,5 @@ fn main() {
         let got = db.get(*k);
         println!("For key: {:?}, Got: {:?}", k, got);
     }
-    db.close();
+    db.close().expect("close");
 }

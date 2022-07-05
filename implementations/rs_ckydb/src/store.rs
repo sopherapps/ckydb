@@ -475,7 +475,7 @@ impl Store {
             )?;
 
             self.memtable.clear();
-            self.data_files.push(new_data_filename);
+            self.data_files.push(self.current_log_file.clone());
             // endure the data files are sorted
             self.data_files.sort();
             self.create_new_log_file()?;
