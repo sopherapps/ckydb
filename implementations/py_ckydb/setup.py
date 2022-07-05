@@ -1,4 +1,5 @@
 import pathlib
+
 from setuptools import setup, find_packages
 
 # The directory containing this file
@@ -10,7 +11,7 @@ README = (HERE / "README.md").read_text()
 # This call to setup() does all the work
 setup(
     name="ckydb",
-    version="0.0.2",
+    version="0.0.4",
     description="A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persist data on disk.",
     long_description=README,
     long_description_content_type="text/markdown",

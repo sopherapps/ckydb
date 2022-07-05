@@ -1,40 +1,104 @@
 # ckydb
 
-A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
+A simple fast memory-first thread-safe key-value embedded database that persists data on disk.
 
-It is read as 'skydb'
+It is read as 'skydb' This the rust implementation of ckydb
 
-## Implementations
+## Quick Start
 
-__Note: The project is still under heavy development__.
-
-All implementations are found in this monorepo in the `implementations` folder
-
-- [Python](./implementations/py_ckydb) (Completed -- public API is stable)
+- Create a new project and activate your virtual environment
 
 ```shell
-pip install ckydb
+cargo new ckydb_example
 ```
 
-- [Go](./implementations/go-ckydb) (Completed -- public API is stable)
-
-```shell
-go get github.com/sopherapps/ckydb/implementations/go-ckydb
-```
-
-- [Rust](./implementations/rs_ckydb) (Completed -- public API is stable)
-
-Add the following to your `Cargo.toml` file
+- Add ckydb to the `Cargo.toml` as a dependency
 
 ```TOML
 [dependencies]
-ckydb = { version = "0.0.5" }
+ckydb = { version = "0.0.5" } # put the appropriate version. 0.1.0 is just an example
 ```
 
-- Nodejs (Pending)
+- Add the following code to the `src/main.rs` file
+
+```rust
+use ckydb::{connect, Controller};
+
+fn main() {
+    let mut db = connect("db", 4.0, 60.0).unwrap();
+    let keys = ["hey", "hi", "yoo-hoo", "bonjour"].to_vec();
+    let values = ["English", "English", "Slang", "French"].to_vec();
+
+    // Setting the values
+    println!("[Inserting key-value pairs]");
+    for (k, v) in keys.clone().into_iter().zip(values) {
+        let _ = db.set(k, v);
+    }
+
+    // Getting the values
+    println!("[After insert]");
+    for k in keys.clone() {
+        let got = db.get(k).unwrap();
+        println!("For key: {:?}, Got: {:?}", k, got);
+    }
+
+    // Deleting some values
+    for k in &keys[2..] {
+        let removed = db.delete(*k);
+        println!("Removed: key: {:?}, resp: {:?}", k, removed);
+    }
+
+    for k in &keys {
+        let got = db.get(*k);
+        println!("[After delete: For key: {:?}, Got: {:?}", k, got);
+    }
+
+    // Deleting all values
+    let cleared = db.clear();
+    println!("Cleared: {:?}", cleared);
+
+    println!("[After clear]");
+    for k in &keys {
+        let got = db.get(*k);
+        println!("For key: {:?}, Got: {:?}", k, got);
+    }
+    db.close().expect("close");
+}
+
+```
+
+- Run the app and observe the terminal
 
 ```shell
-npm install ckydb
+cargo run
+```
+
+## Examples
+
+Some examples can be found in the /examples folder.
+
+```shell
+cargo run --example hello_ckydb
+```
+
+## How to Run Tests
+
+- Clone the repo
+
+```shell
+git clone git@github.com:sopherapps/ckydb.git
+```
+
+- Enter the rust implementation folder
+
+```shell
+cd ckydb/implementations/rs_ckydb
+```
+
+- Run the test command
+
+```shell
+cargo test
 ```
 
 ## Under the Hood
@@ -45,7 +109,7 @@ npm install ckydb
   memory from the index file (a ".idx" file). The index is basically a map of `key: TIMESTAMPED-key`
 - The TIMESTAMPED-key and its value are stored first in a log file (a ".log" file). This current log file has an
   in-memory copy we call `memtable`
-- When the current log file exceeds a predefined size, it is converted to a sorted data file (a ".cky"
+- When the current log file exceeds a predefined size (4MBs by default), it is converted to a sorted data file (a ".cky"
   file) and `memtable` refreshed and a new log file created.
 - The names of each ".cky" or ".log" file are the timestamps when they were created. Do note that conversion of ".log"
   to "cky" just changes the file extension.
@@ -56,7 +120,7 @@ npm install ckydb
 - The name of the current log (`current_log_file`) file is also kept in memory, and updated when a new log file is
   created.
 - There is also a ".del" file that holds all the `key: TIMESTAMPED-key` pairs that have been marked for deletion.
-- At a predefined interval, a background task deletes the values from ".cky" and ".log" files
+- At a predefined interval (5 minutes by default), a background task deletes the values from ".cky" and ".log" files
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
@@ -140,30 +204,8 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 1655304770518678-goat[><?&(^#]678 months{&*/%}1655304670510698-hen[><?&(^#]567 months{&*/%}1655304770534578-pig[><?&(^#]70 months{&*/%}1655303775538278-fish[><?&(^#]8990 months$%#@*&^&
 ```
 
-## Ideas For Improvement
-
-- [ ] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
-- [ ] Explicitly allow for conditional multiple concurrent writes (e.g. lock on key, not on store)
-- [ ] Distribute the database across different machines or nodes (
-    e.g. have multiple backend nodes, and let each node's timestamped key range be recorded on the
-     master/main/gateway node(s). The gateway nodes themselves could be replicated. Clients read/update
-     data through the gateway node)
-
-### Multiple Concurrent Reads, Single Writes at a time
-
-- Have no lock on the main routine of `ckydb.get`. 
-  `ckydb.get` has props `index`, `memtable` and `cache` as its source of truth.
-- To avoid using a stale `cache` and yet also avoid data races between `store.set` and `store.get`, both,
-  of old keys, we have a `cache_lock` lock.
-  This lock is to be obtained by either `store.get` or `store.set` both for old keys
-- Have the same `mut_lock` lock on the `ckydb.delete` and `ckydb.set`. 
-  If you had separate locks, there would be chance for a data race.
-- For `ckydb.clear`, update `index` **first**.
-- For `ckydb.delete`, update `index` **last**.
-- For `ckydb.set` of a new key (i.e. not an update), update `index` **last**.
-- For `ckydb.set` of pre-existing key, update `memtable` or `cache` **last** as index would already be up-to-date.
-- For `store.vacuum` task and `store.delete`, there will be a `del_file_lock` within store to avoid conflicts.
-
+**Note: There is configuration that one can enable to escape the "token" in any user-defined key or value just to avoid
+weird errors. However, the escaping is expensive and it is thus turned off by default.**
 
 ## Acknowledgments
 
@@ -172,5 +214,5 @@ goat[><?&(^#]1655304770518678-goat{&*/%}hen[><?&(^#]1655304670510698-hen{&*/%}pi
 
 ## License
 
-Copyright (c) 2022 [Martin Ahindura](https://github.com/tinitto). All implementations are licensed to Licensed under
+Copyright (c) 2022 [Martin Ahindura](https://github.com/tinitto). All implementations are licensed under
 the [MIT License](./LICENSE)

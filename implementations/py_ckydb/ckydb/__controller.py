@@ -18,7 +18,7 @@ class Ckydb:
         self.__store = Store(db_path=db_path, max_file_size_kb=max_file_size_kb)
         self.__db_path = db_path
         self.__store.load()
-        self.__lock: mp.synchronize.Lock = mp.Lock()
+        self.__mut_lock: mp.synchronize.Lock = mp.Lock()
         self.__vacuum_process: Optional[mp.Process] = None
         self.__is_open = False
         self.__exit_event = mp.Event()
@@ -42,7 +42,7 @@ class Ckydb:
         :param k: the key for the given value
         :param v: the value to set
         """
-        with self.__lock:
+        with self.__mut_lock:
             return self.__store.set(k=k, v=v)
 
     def get(self, k: str) -> str:
@@ -54,8 +54,7 @@ class Ckydb:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        with self.__lock:
-            return self.__store.get(k)
+        return self.__store.get(k)
 
     def delete(self, k: str):
         """
@@ -65,14 +64,14 @@ class Ckydb:
         :raises NotFoundError: if value is not found
         :raises CorruptDataError: if data in database is corrupted
         """
-        with self.__lock:
+        with self.__mut_lock:
             return self.__store.delete(k)
 
     def clear(self):
         """
         Clears all the data in the database
         """
-        with self.__lock:
+        with self.__mut_lock:
             return self.__store.clear()
 
     def __start_vacuum_cycles(self):
@@ -84,7 +83,7 @@ class Ckydb:
             kwargs=dict(db_path=self.__db_path,
                         interval=self.__vacuum_interval_sec,
                         exit_event=self.__exit_event,
-                        lock=self.__lock))
+                        lock=self.__mut_lock))
         self.__vacuum_process.start()
 
     def __del__(self):
