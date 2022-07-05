@@ -16,4 +16,4 @@ exclude = ["examples/*"]
 [dependencies]
 
 [dev-dependencies]
-serial_test = "*"
+serial_test = "0.8.0"
