@@ -22,13 +22,13 @@ pip install ckydb
 go get github.com/sopherapps/ckydb/implementations/go-ckydb
 ```
 
-- Rust (Pending)
+- [Rust](./implementations/rs_ckydb) (Completed -- public API is stable)
 
 Add the following to your `Cargo.toml` file
 
 ```TOML
 [dependencies]
-ckydb = { version = "0.1.0" }
+ckydb = { version = "0.0.5" }
 ```
 
 - Nodejs (Pending)
