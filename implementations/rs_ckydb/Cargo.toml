@@ -9,6 +9,7 @@ description = "A simple fast memory-first thread-safe key-value embedded databas
 authors = ["Martin Ahindura <team.sopherapps@gmail.com>"]
 keywords = ["cache", "key-value-store", "disk-cache"]
 categories = ["storage", "database"]
+exclude = ["examples/*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
