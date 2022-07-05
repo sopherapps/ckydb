@@ -101,6 +101,12 @@ cd ckydb/implementations/rs_ckydb
 cargo test
 ```
 
+- Run the bench test command
+
+```shell
+cargo bench
+```
+
 ## Under the Hood
 
 - Every key has a TIMESTAMP prefix, added to it on creation. This TIMESTAMPED key is the one used to store data in a

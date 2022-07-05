@@ -41,6 +41,7 @@ pub(crate) struct Cache {
 
 impl Cache {
     /// Initializes a new Cache with the given `data`, and bounds (`start`, `end`)
+    // #[inline]
     pub(crate) fn new(data: HashMap<String, String>, start: &str, end: &str) -> Cache {
         Cache {
             data,
@@ -50,6 +51,7 @@ impl Cache {
     }
 
     /// Initializes a new empty Cache with start: "0", end: "0" and data as empty Hashmap
+    // #[inline]
     pub(crate) fn new_empty() -> Cache {
         Cache {
             data: Default::default(),
@@ -60,19 +62,23 @@ impl Cache {
 }
 
 impl Caching for Cache {
+    // #[inline]
     fn is_in_range(&self, key: &str) -> bool {
         let key = key.to_string();
         self.start <= key && key <= self.end
     }
 
+    // #[inline]
     fn remove(&mut self, key: &str) {
         self.data.remove(key);
     }
 
+    // #[inline]
     fn update(&mut self, key: &str, value: &str) {
         self.data.insert(key.to_string(), value.to_string());
     }
 
+    // #[inline]
     fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
     }
