@@ -1,7 +1,14 @@
 [package]
 name = "ckydb"
-version = "0.1.0"
+version = "0.0.5"
 edition = "2021"
+license-file = "LICENSE"
+repository = "https://github.com/sopherapps/ckydb"
+readme = "README.md"
+description = "A simple fast memory-first thread-safe key-value embedded database that persists data on disk."
+authors = ["Martin Ahindura <team.sopherapps@gmail.com>"]
+keywords = ["cache", "key-value-store", "disk-cache"]
+categories = ["storage", "database"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

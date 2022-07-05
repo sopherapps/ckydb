@@ -16,7 +16,7 @@ cargo new ckydb_example
 
 ```TOML
 [dependencies]
-ckydb = { version = "0.1.0" } # put the appropriate version. 0.1.0 is just an example
+ckydb = { version = "0.0.5" } # put the appropriate version. 0.1.0 is just an example
 ```
 
 - Add the following code to the `src/main.rs` file
