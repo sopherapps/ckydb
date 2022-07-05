@@ -88,3 +88,4 @@ cython_debug/
 
 tests/assets/test_ckydb_db/
 tests/assets/test_store_db/
+db/
