@@ -173,6 +173,48 @@ go mod tidy
 go test ./...
 ```
 
+- Run the benchmark tests
+
+```shell
+go test -bench=. -run=^#
+```
+
+- Latest benchmarks are as shown below:
+
+```shell
+goos: darwin
+goarch: amd64
+pkg: github.com/sopherapps/ckydb/implementations/go-ckydb
+cpu: Intel(R) Core(TM) i7-5557U CPU @ 3.10GHz
+BenchmarkCkydb/Set_hey_English-4                    7128            155768 ns/op
+BenchmarkCkydb/Set_hi_English-4                     8040            152184 ns/op
+BenchmarkCkydb/Set_salut_French-4                   6781            148910 ns/op
+BenchmarkCkydb/Set_bonjour_French-4                 8011            138914 ns/op
+BenchmarkCkydb/Set_hola_Spanish-4                   8264            144506 ns/op
+BenchmarkCkydb/Set_oi_Portuguese-4                  8353            148823 ns/op
+BenchmarkCkydb/Set_mulimuta_Runyoro-4               8340            147906 ns/op
+BenchmarkCkydb/Get_hi-4                         21843999                51.76 ns/op
+BenchmarkCkydb/Get_salut-4                      22164397                51.74 ns/op
+BenchmarkCkydb/Get_bonjour-4                    24162084                45.64 ns/op
+BenchmarkCkydb/Get_hola-4                       39530481                28.52 ns/op
+BenchmarkCkydb/Get_oi-4                         36606564                29.52 ns/op
+BenchmarkCkydb/Get_mulimuta-4                   34984358                31.45 ns/op
+BenchmarkCkydb/Get_hey-4                        23291575                51.16 ns/op
+BenchmarkCkydb/Update_mulimuta_Aliguma-4            7328            166744 ns/op
+BenchmarkCkydb/Update_hey_Jane-4                    7428            151814 ns/op
+BenchmarkCkydb/Update_hi_John-4                     7833            151954 ns/op
+BenchmarkCkydb/Update_salut_Jean-4                  7737            152974 ns/op
+BenchmarkCkydb/Update_oi_Ronaldo-4                  7584            150535 ns/op
+BenchmarkCkydb/Delete_hi-4                      35498058                32.08 ns/op
+BenchmarkCkydb/Delete_salut-4                   35957875                31.59 ns/op
+BenchmarkCkydb/Delete_oi-4                      35782756                34.47 ns/op
+BenchmarkCkydb/Delete_mulimuta-4                34095344                31.71 ns/op
+BenchmarkCkydb/Delete_hey-4                     32985225                32.33 ns/op
+BenchmarkCkydb/Clear-4                              1532            729148 ns/op
+PASS
+ok      github.com/sopherapps/ckydb/implementations/go-ckydb    35.500s
+```
+
 ## Under the Hood
 
 - Every key has a TIMESTAMP key, added to it on creation. This TIMESTAMPED key is the one used to store data in a

@@ -17,3 +17,8 @@ exclude = ["examples/*"]
 
 [dev-dependencies]
 serial_test = "0.8.0"
+criterion = "0.3"
+
+[[bench]]
+name = "ckydb"
+harness = false

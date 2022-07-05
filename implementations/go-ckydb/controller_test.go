@@ -450,6 +450,74 @@ func TestCkydb(t *testing.T) {
 	})
 }
 
+func BenchmarkCkydb(b *testing.B) {
+	dbPath, err := filepath.Abs("db")
+	if err != nil {
+		b.Fatal(err)
+	}
+	vacuumIntervalSec := 60.0
+	maxFileSizeKB := 320.0 / 1024
+	testRecords := map[string]string{
+		"hey":      "English",
+		"hi":       "English",
+		"salut":    "French",
+		"bonjour":  "French",
+		"hola":     "Spanish",
+		"oi":       "Portuguese",
+		"mulimuta": "Runyoro",
+	}
+	updates := map[string]string{
+		"hey":      "Jane",
+		"hi":       "John",
+		"salut":    "Jean",
+		"oi":       "Ronaldo",
+		"mulimuta": "Aliguma",
+	}
+
+	db, err := connectToTestDb(dbPath, maxFileSizeKB, vacuumIntervalSec)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for k, v := range testRecords {
+		b.Run(fmt.Sprintf("Set %s %s", k, v), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = db.Set(k, v)
+			}
+		})
+	}
+
+	for k := range testRecords {
+		b.Run(fmt.Sprintf("Get %s", k), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_, _ = db.Get(k)
+			}
+		})
+	}
+
+	for k, v := range updates {
+		b.Run(fmt.Sprintf("Update %s %s", k, v), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = db.Set(k, v)
+			}
+		})
+	}
+
+	for k := range updates {
+		b.Run(fmt.Sprintf("Delete %s", k), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = db.Delete(k)
+			}
+		})
+	}
+
+	b.Run("Clear", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = db.Clear()
+		}
+	})
+}
+
 // connectToTestDb opens the db at the given path after
 // clearing out old data
 func connectToTestDb(dbPath string, maxFileSizeKB float64, vacuumIntervalSec float64) (*Ckydb, error) {

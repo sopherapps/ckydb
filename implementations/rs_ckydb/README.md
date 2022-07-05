@@ -101,6 +101,45 @@ cd ckydb/implementations/rs_ckydb
 cargo test
 ```
 
+- Run the bench test command
+
+```shell
+cargo bench
+```
+
+- The latest benchmarking results are:
+
+```shell
+set hey English         time:   [137.62 us 141.90 us 147.99 us]                            
+set hi English          time:   [192.54 us 225.35 us 261.72 us]                           
+set salut French        time:   [132.90 us 135.63 us 139.30 us]                             
+set bonjour French      time:   [132.69 us 133.80 us 135.11 us]                               
+set hola Spanish        time:   [134.12 us 135.83 us 138.13 us]                             
+set oi Portuguese       time:   [134.64 us 136.19 us 138.08 us]                              
+set mulimuta Runyoro    time:   [136.19 us 137.73 us 139.53 us]                                 
+update hey to Jane      time:   [136.23 us 138.95 us 143.04 us]                               
+update hi to John       time:   [135.33 us 136.72 us 138.30 us]                              
+update hola to Santos   time:   [135.17 us 136.60 us 138.29 us]                                  
+update oi to Ronaldo    time:   [135.23 us 137.36 us 140.53 us]                                 
+update mulimuta to Aliguma                                                                            
+                        time:   [136.02 us 137.23 us 138.61 us]
+get hey                 time:   [300.57 ns 302.71 ns 305.10 ns]                    
+get hi                  time:   [365.49 ns 425.81 ns 501.96 ns]                   
+get salut               time:   [295.12 ns 296.45 ns 299.09 ns]                      
+get bonjour             time:   [311.02 ns 325.51 ns 346.03 ns]                        
+get hola                time:   [295.52 ns 295.83 ns 296.21 ns]                     
+get oi                  time:   [288.47 ns 289.03 ns 289.69 ns]                   
+get mulimuta            time:   [296.09 ns 296.30 ns 296.55 ns]                         
+delete hey              time:   [44.772 ns 53.713 ns 65.174 ns]                        
+delete hi               time:   [39.170 ns 41.810 ns 45.560 ns]                       
+delete salut            time:   [40.376 ns 41.609 ns 43.097 ns]                          
+delete bonjour          time:   [43.702 ns 44.510 ns 45.426 ns]                            
+delete hola             time:   [38.753 ns 39.253 ns 39.788 ns]                         
+delete oi               time:   [39.040 ns 39.266 ns 39.552 ns]                       
+delete mulimuta         time:   [23.381 ns 23.572 ns 23.771 ns]                             
+clear                   time:   [573.03 us 596.06 us 620.95 us]                  
+```
+
 ## Under the Hood
 
 - Every key has a TIMESTAMP prefix, added to it on creation. This TIMESTAMPED key is the one used to store data in a

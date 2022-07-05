@@ -21,6 +21,7 @@ const DUMMY_FILE_DATA: [(&str, &str); 5] = [
 /// # Errors
 ///
 /// See [fs::remove_dir_all]
+// #[inline]
 pub(crate) fn clear_dummy_file_data_in_db<P: AsRef<Path>>(db_path: P) -> io::Result<()> {
     fs::remove_dir_all(db_path).or_else(|err| match err.kind() {
         NotFound => Ok(()),
@@ -33,6 +34,7 @@ pub(crate) fn clear_dummy_file_data_in_db<P: AsRef<Path>>(db_path: P) -> io::Res
 /// # Errors
 ///
 /// See [fs::create_dir_all]
+// #[inline]
 pub(crate) fn add_dummy_file_data_in_db(db_path: &str) -> io::Result<()> {
     let db_path = Path::new(db_path);
 
@@ -52,6 +54,7 @@ pub(crate) fn add_dummy_file_data_in_db(db_path: &str) -> io::Result<()> {
 /// # Errors
 ///
 /// See [fs::read_dir] and [fs::read_to_string]
+// #[inline]
 pub(crate) fn read_files_with_extension<P: AsRef<Path>>(
     db_path: P,
     ext: &str,
@@ -76,6 +79,7 @@ pub(crate) fn read_files_with_extension<P: AsRef<Path>>(
 /// # Errors
 ///
 /// See [fs::read_dir]
+// #[inline]
 pub(crate) fn get_files_with_extensions<P: AsRef<Path>>(
     db_path: P,
     exts: Vec<&str>,
@@ -100,6 +104,7 @@ pub(crate) fn get_files_with_extensions<P: AsRef<Path>>(
 /// # Errors
 ///
 /// See [fs::read_dir]
+// #[inline]
 pub(crate) fn get_file_names_in_folder<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
     fs::read_dir(path)?
         .map(|res| res.map(|e| e.file_name().into_string().unwrap_or("".to_string())))
@@ -111,6 +116,7 @@ pub(crate) fn get_file_names_in_folder<P: AsRef<Path>>(path: P) -> io::Result<Ve
 /// # Errors
 ///
 /// See [fs::OpenOptions::open]
+// #[inline]
 pub(crate) fn create_file_if_not_exist<P: AsRef<Path>>(path: P) -> io::Result<()> {
     OpenOptions::new()
         .write(true)
@@ -131,6 +137,7 @@ pub(crate) fn create_file_if_not_exist<P: AsRef<Path>>(path: P) -> io::Result<()
 /// # Errors
 ///
 /// See [fs::OpenOptions::open] and [std::io::Write::write_all]
+// #[inline]
 pub(crate) fn append_to_file<P: AsRef<Path>>(path: P, content: &str) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).append(true).open(path)?;
     file.write_all(content.as_bytes())
@@ -141,6 +148,7 @@ pub(crate) fn append_to_file<P: AsRef<Path>>(path: P, content: &str) -> io::Resu
 /// # Errors
 ///
 /// See [std::time::SystemTime::duration_since]
+// #[inline]
 pub(crate) fn get_current_timestamp_str() -> io::Result<String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -155,6 +163,7 @@ pub(crate) fn get_current_timestamp_str() -> io::Result<String> {
 /// This function might throw an [std::io::Error] of kind [std::io::InvalidData]
 /// if the `content` string is malformed e.g. the key-values are not appropriately separated by
 /// [crate::constants::KEY_VALUE_SEPARATOR]
+// #[inline]
 pub(crate) fn extract_key_values_from_str(content: &str) -> io::Result<HashMap<String, String>> {
     let kv_pair_strings = extract_tokens_from_str(content);
     let mut results: HashMap<String, String> = Default::default();
@@ -172,6 +181,7 @@ pub(crate) fn extract_key_values_from_str(content: &str) -> io::Result<HashMap<S
 }
 
 /// Extracts tokens from a byte array
+// #[inline]
 pub(crate) fn extract_tokens_from_str(content: &str) -> Vec<String> {
     let trimmed_content = content.trim_end_matches(TOKEN_SEPARATOR);
 
@@ -216,6 +226,7 @@ pub(crate) fn delete_key_values_from_file<P: AsRef<Path>>(
 }
 
 /// checks if the string phrase has any of the prefixes i.e. starts with any of those prefixes
+// #[inline]
 fn has_any_of_prefixes(phrase: &str, prefixes: &Vec<String>) -> bool {
     for prefix in prefixes {
         if phrase.starts_with(prefix) {
@@ -232,6 +243,7 @@ fn has_any_of_prefixes(phrase: &str, prefixes: &Vec<String>) -> bool {
 /// # Errors
 ///
 /// See [fs::write]
+// #[inline]
 pub(crate) fn persist_map_data_to_file<P: AsRef<Path>>(
     data: &HashMap<String, String>,
     path: P,
@@ -251,6 +263,7 @@ pub(crate) fn persist_map_data_to_file<P: AsRef<Path>>(
 /// # Errors
 ///
 /// See [std::fs::metadata]
+// #[inline]
 pub(crate) fn get_file_size<P: AsRef<Path>>(path: P) -> io::Result<f64> {
     let file_size_in_bytes = fs::metadata(path)?.len();
     Ok(file_size_in_bytes as f64 / 1024.0)

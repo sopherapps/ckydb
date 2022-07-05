@@ -212,6 +212,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist]
+    // #[inline]
     fn create_index_file_if_not_exists(&self) -> io::Result<()> {
         utils::create_file_if_not_exist(&self.index_file_path)
     }
@@ -221,6 +222,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist]
+    // #[inline]
     fn create_del_file_if_not_exists(&self) -> io::Result<()> {
         utils::create_file_if_not_exist(&self.del_file_path)
     }
@@ -230,6 +232,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist] and [Store::create_new_log_file]
+    // #[inline]
     fn create_log_file_if_not_exists(&mut self) -> io::Result<()> {
         let extensions = vec![LOG_FILE_EXT];
         let log_files = utils::get_files_with_extensions(&self.db_path, extensions)?;
@@ -278,6 +281,7 @@ impl Store {
     /// # Error
     ///
     /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
+    // #[inline]
     fn load_index_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.index_file_path)?;
         self.index = utils::extract_key_values_from_str(&content)?;
@@ -289,6 +293,7 @@ impl Store {
     /// # Error
     ///
     /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
+    // #[inline]
     fn load_memtable_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.current_log_file_path)?;
         self.memtable = utils::extract_key_values_from_str(&content)?;
@@ -319,6 +324,7 @@ impl Store {
     /// # Errors
     ///
     /// See [fs::read_to_string]
+    // #[inline]
     fn get_keys_to_delete(&self) -> io::Result<Vec<String>> {
         let content = fs::read_to_string(&self.del_file_path)?;
         Ok(utils::extract_tokens_from_str(&content))
@@ -357,6 +363,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::delete_key_values_from_file]
+    // #[inline]
     fn remove_timestamped_key_for_key_if_exists(&mut self, key: &str) -> io::Result<()> {
         if let Some(_) = self.index.get(key) {
             self.index.remove(key);
@@ -373,6 +380,7 @@ impl Store {
     ///
     /// See [Store::save_key_value_pair_to_memtable], [Store::load_cache_containing_key],
     /// [Store::save_key_value_pair_to_cache]
+    // #[inline]
     fn save_key_value_pair(&mut self, timestamped_key: &str, value: &str) -> io::Result<()> {
         if timestamped_key.to_string() >= self.current_log_file {
             return self.save_key_value_pair_to_memtable(timestamped_key, value);
@@ -391,6 +399,7 @@ impl Store {
     /// # Errors
     ///
     /// See [Store::persist_cache_to_disk] and [utils::persist_map_data_to_file]
+    // #[inline]
     fn delete_key_value_pair_if_exists(&mut self, key: &str) -> io::Result<()> {
         if self.cache.is_in_range(key) {
             self.cache.remove(key);
@@ -411,6 +420,7 @@ impl Store {
     /// # Errors
     ///
     /// See [crate::utils::persist_map_data_to_file] and [Store::roll_log_file_if_too_big]
+    // #[inline]
     fn save_key_value_pair_to_memtable(
         &mut self,
         timestamped_key: &str,
@@ -428,6 +438,7 @@ impl Store {
     /// # Errors
     ///
     /// See [Store::persist_cache_to_disk]
+    // #[inline]
     fn save_key_value_pair_to_cache(
         &mut self,
         timestamped_key: &str,
@@ -445,6 +456,7 @@ impl Store {
     /// an of the ranges of timestamps represented by the data file names and the log file name.
     /// Other errors may occur as seen in
     /// [std::fs::read_to_string] and [utils::extract_key_values_from_str]
+    // #[inline]
     fn load_cache_containing_key(&mut self, key: &str) -> io::Result<()> {
         let (start, end) = self.get_timestamp_range_for_key(key).ok_or(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -489,6 +501,7 @@ impl Store {
     /// # Errors
     ///
     /// See [crate::utils::persist_map_data_to_file]
+    // #[inline]
     fn persist_cache_to_disk(&self) -> io::Result<()> {
         let data_file_path = self
             .db_path
@@ -500,6 +513,7 @@ impl Store {
     /// the key lies. The timestamps are got from the names of the data files and the current log file
     /// It will return None if there is no relevant timestamp range from the available data file names
     /// and log file names
+    // #[inline]
     fn get_timestamp_range_for_key(&self, key: &str) -> Option<(String, String)> {
         let mut timestamps = self.data_files.clone();
         timestamps.push(self.current_log_file.clone());
@@ -524,6 +538,7 @@ impl Store {
     /// don't contain the key yet they should contain it.
     ///
     /// Obviously [crate::errors::CorruptedDataError] has a very minute chance of happening
+    // #[inline]
     fn get_value_for_key(&mut self, timestamped_key: &str) -> Result<String, CorruptedDataError> {
         if timestamped_key.to_string() >= self.current_log_file {
             let value = self
@@ -547,6 +562,7 @@ impl Store {
     /// # Errors
     ///
     /// See [fs::remove_dir_all]
+    // #[inline]
     fn clear_disk(&self) -> io::Result<()> {
         fs::remove_dir_all(&self.db_path)
     }
