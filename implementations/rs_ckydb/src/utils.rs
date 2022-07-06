@@ -1,5 +1,4 @@
 use crate::constants::{KEY_VALUE_SEPARATOR, TOKEN_SEPARATOR};
-use crate::errors::CorruptedDataError;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
@@ -171,7 +170,10 @@ pub(crate) fn extract_key_values_from_str(content: &str) -> io::Result<HashMap<S
     for kv_pair_string in kv_pair_strings {
         let pair: Vec<&str> = kv_pair_string.split(KEY_VALUE_SEPARATOR).collect();
         if pair.len() != 2 {
-            return Err(io::Error::new(ErrorKind::InvalidData, CorruptedDataError));
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "key-value pair not separated on file",
+            ));
         }
 
         results.insert(pair[0].to_string(), pair[1].to_string());

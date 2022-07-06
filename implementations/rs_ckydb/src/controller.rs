@@ -1,5 +1,6 @@
-use crate::errors::{CorruptedDataError, NotFoundError};
+use crate::errors as ckydb;
 use crate::store::{Storage, Store};
+use crate::sync::Lock;
 use std::io::ErrorKind;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -45,24 +46,28 @@ pub trait Controller {
     /// # Errors
     /// - [CorruptedDataError] in case the data on disk is inconsistent with that in memory
     ///
-    /// [CorruptedDataError]: crate::errors::CorruptedDataError
-    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError>;
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()>;
 
     /// Retrieves the value corresponding to the given key
     ///
     /// # Errors
     /// - [NotFoundError] in case the key is not found in the store
+    /// - [CorruptedDataError] in case the data on disk is inconsistent with that in memory
     ///
-    /// [NotFoundError]: crate::errors::NotFoundError
-    fn get(&mut self, key: &str) -> Result<String, NotFoundError>;
+    /// [NotFoundError]: crate::errors::Error::NotFoundError
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn get(&mut self, key: &str) -> ckydb::Result<String>;
 
     /// Removes the key-value pair corresponding to the passed key
     ///
     /// # Errors
     /// - [NotFoundError] in case the key is not found in the store
+    /// - [CorruptedDataError] in case the data on disk is inconsistent with that in memory
     ///
-    /// [NotFoundError]: crate::errors::NotFoundError
-    fn delete(&mut self, key: &str) -> Result<(), NotFoundError>;
+    /// [NotFoundError]: crate::errors::Error::NotFoundError
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn delete(&mut self, key: &str) -> ckydb::Result<()>;
 
     /// Resets the entire Store, and clears everything on disk
     ///
@@ -78,11 +83,14 @@ pub trait Controller {
 /// It implements the [Controller] trait as well as the [Drop] trait
 pub struct Ckydb {
     tasks: Option<Vec<JoinHandle<()>>>,
-    store: Arc<Mutex<Store>>,
+    store: Store,
+    mut_lock: Arc<Lock>,
     vacuum_interval_sec: f64,
     is_open: bool,
     tx: mpsc::Sender<Signal>,
     rv: Arc<Mutex<mpsc::Receiver<Signal>>>,
+    db_path: String,
+    max_file_size_kb: f64,
 }
 
 impl Ckydb {
@@ -99,11 +107,14 @@ impl Ckydb {
 
         store.load().and(Ok(Ckydb {
             tasks: Some(vec![]),
-            store: Arc::new(Mutex::new(store)),
+            store,
             vacuum_interval_sec,
             is_open: false,
             tx,
             rv: Arc::new(Mutex::new(rv)),
+            db_path: db_path.to_string(),
+            max_file_size_kb,
+            mut_lock: Arc::new(Lock::new(1)),
         }))
     }
 }
@@ -113,10 +124,12 @@ impl Controller for Ckydb {
         if self.is_open {
             return Ok(());
         }
-
-        let store = Arc::clone(&self.store);
+        let db_path = self.db_path.clone();
         let vacuum_interval_sec = self.vacuum_interval_sec;
         let rv = Arc::clone(&self.rv);
+        let mut_lock = Arc::clone(&self.mut_lock);
+        let mut shadow_store = Store::new(&db_path, self.max_file_size_kb);
+        shadow_store.load()?;
 
         let vacuum_task = thread::spawn(move || {
             let interval = Duration::from_secs_f64(vacuum_interval_sec);
@@ -135,11 +148,14 @@ impl Controller for Ckydb {
                         if wait < number_of_waits {
                             thread::sleep(wait_interval);
                         } else {
-                            if let Ok(store) = store.lock() {
-                                store
+                            // First get the mut_lock so that you don't cause data races when
+                            // another mutation is taking place
+                            if let Ok(_) = mut_lock.lock() {
+                                shadow_store
                                     .vacuum()
                                     .unwrap_or_else(|err| println!("vacuum error: {}", err));
                             }
+
                             wait = 0;
                         }
                     }
@@ -176,32 +192,29 @@ impl Controller for Ckydb {
         Ok(())
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError> {
-        self.store
+    fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
+        self.mut_lock
             .lock()
-            .and_then(|mut store| Ok(store.set(key, value)))
+            .and_then(|_| Ok(self.store.set(key, value)))
             .expect("set store")
     }
 
-    fn get(&mut self, key: &str) -> Result<String, NotFoundError> {
-        self.store
-            .lock()
-            .and_then(|mut store| Ok(store.get(key)))
-            .expect("set store")
+    fn get<'a>(&'a mut self, key: &'a str) -> ckydb::Result<String> {
+        self.store.get(key)
     }
 
-    fn delete(&mut self, key: &str) -> Result<(), NotFoundError> {
-        self.store
+    fn delete<'a>(&'a mut self, key: &'a str) -> ckydb::Result<()> {
+        self.mut_lock
             .lock()
-            .and_then(|mut store| Ok(store.delete(key)))
-            .expect("set store")
+            .and_then(|_| Ok(self.store.delete(key)))
+            .expect("delete store")
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.store
+        self.mut_lock
             .lock()
-            .and_then(|mut store| Ok(store.clear()))
-            .expect("set store")
+            .and_then(|_| Ok(self.store.clear()))
+            .expect("clear store")
     }
 }
 

@@ -2,10 +2,14 @@ use crate::cache::{Cache, Caching};
 use crate::constants::{
     DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, LOG_FILE_EXT, TOKEN_SEPARATOR,
 };
-use crate::errors::{CorruptedDataError, NotFoundError};
+use crate::errors as ckydb;
+use crate::errors::Error::{CorruptedDataError, NotFoundError};
+use crate::sync::Lock;
 use crate::utils;
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::{fs, io};
 
 /// `Store` trait represents the basic expectation for the internal store that accesses the file
@@ -39,27 +43,30 @@ pub(crate) trait Storage {
     /// # Errors
     /// - [CorruptedDataError] in case the data on disk is inconsistent with that in memory
     ///
-    /// [CorruptedDataError]: crate::errors::CorruptedDataError
-    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError>;
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()>;
 
     /// Retrieves the value corresponding to the given key
     ///
     /// # Errors
     /// - [NotFoundError] in case the key is not found in the store
-    /// - Panics with [CorruptedDataError] in case the data on disk is not
+    /// - [CorruptedDataError] in case the data on disk is not
     /// consistent with that in memory
     ///
-    /// [NotFoundError]: crate::errors::NotFoundError
-    /// [CorruptedDataError]: crate::errors::CorruptedDataError
-    fn get(&mut self, key: &str) -> Result<String, NotFoundError>;
+    /// [NotFoundError]: crate::errors::Error::NotFoundError
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn get(&mut self, key: &str) -> ckydb::Result<String>;
 
     /// Removes the key-value pair corresponding to the passed key
     ///
     /// # Errors
     /// - [NotFoundError] in case the key is not found in the store
+    /// - [CorruptedDataError] in case the data on disk is not
+    /// consistent with that in memory
     ///
-    /// [NotFoundError]: crate::errors::NotFoundError
-    fn delete(&mut self, key: &str) -> Result<(), NotFoundError>;
+    /// [NotFoundError]: crate::errors::Error::NotFoundError
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn delete(&mut self, key: &str) -> ckydb::Result<()>;
 
     /// Resets the entire Store, and clears everything on disk
     ///
@@ -94,6 +101,8 @@ pub(crate) struct Store {
     current_log_file_path: PathBuf,
     del_file_path: PathBuf,
     index_file_path: PathBuf,
+    cache_lock: Arc<Lock>,
+    del_file_lock: Arc<Lock>,
 }
 
 impl Storage for Store {
@@ -108,44 +117,69 @@ impl Storage for Store {
         self.load_memtable_from_disk()
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Result<(), CorruptedDataError> {
-        let timestamped_key = self.get_timestamped_key(key).or_else(|_| {
-            self.remove_timestamped_key_for_key_if_exists(key)
-                .unwrap_or(());
-            Err(CorruptedDataError)
-        })?;
+    fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
+        let (timestamped_key, is_new_key) = match self.get_timestamped_key(key) {
+            Ok((t, i)) => (t, i),
+            Err(err) => {
+                self.remove_timestamped_key_for_key_if_exists(key).ok();
+                let data = Some(format!("{}", err));
+                return Err(CorruptedDataError { data });
+            }
+        };
 
-        self.save_key_value_pair(&timestamped_key, value)
-            .or_else(|_| {
-                self.delete_key_value_pair_if_exists(&timestamped_key)
-                    .unwrap_or(());
-                self.remove_timestamped_key_for_key_if_exists(key)
-                    .unwrap_or(());
-                Err(CorruptedDataError)
-            })
-    }
+        if let Err(err) = self.save_key_value_pair(&timestamped_key, value) {
+            if is_new_key {
+                self.delete_key_value_pair_if_exists("&timestamped_key.clone()")
+                    .ok();
+                self.remove_timestamped_key_for_key_if_exists("key").ok();
+            } else if let Some(old_value) = err.get_data() {
+                self.save_key_value_pair(&timestamped_key, &"old_value")
+                    .ok();
+            }
 
-    fn get(&mut self, key: &str) -> Result<String, NotFoundError> {
-        let timestamped_key = self.index.get(key).ok_or(NotFoundError)?;
-        let timestamped_key = timestamped_key.clone();
-        self.get_value_for_key(&timestamped_key)
-            .or_else(|err| panic!("{}", err))
-    }
+            return Err(err);
+        }
 
-    fn delete(&mut self, key: &str) -> Result<(), NotFoundError> {
-        let timestamped_key = self.index.get(key).ok_or(NotFoundError)?;
-
-        utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])
-            .unwrap_or_else(|_| panic!("{}", CorruptedDataError));
-
-        let new_file_entry = format!("{}{}", timestamped_key, TOKEN_SEPARATOR);
-
-        utils::append_to_file(&self.del_file_path, &new_file_entry)
-            .unwrap_or_else(|_| panic!("{}", CorruptedDataError));
-
-        self.index.remove(key);
+        if is_new_key {
+            self.index.insert(key.to_string(), timestamped_key);
+        }
 
         Ok(())
+    }
+
+    fn get(&mut self, key: &str) -> ckydb::Result<String> {
+        let timestamped_key = self.index.get(key).ok_or(NotFoundError {
+            key: "".to_string(),
+        })?;
+
+        let timestamped_key = timestamped_key.to_string();
+        self.get_value_for_key(timestamped_key).or_else(|err| {
+            Err(CorruptedDataError {
+                data: Some(format!("error getting value: {}", err)),
+            })
+        })
+    }
+
+    // TODO: Deal with the key.to_string() call
+    fn delete(&mut self, key: &str) -> ckydb::Result<()> {
+        let timestamped_key = self.index.get(key).ok_or(NotFoundError {
+            key: key.to_string(),
+        })?;
+
+        let lock = Arc::clone(&self.del_file_lock);
+        if let Ok(_) = lock.lock() {
+            utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])?;
+            let new_file_entry = format!("{}{}", timestamped_key, TOKEN_SEPARATOR);
+            utils::append_to_file(&self.del_file_path, &new_file_entry)?;
+
+            self.index.remove(key);
+
+            return Ok(());
+        }
+
+        Err(CorruptedDataError {
+            data: Some("failed to obtain lock on delete file".to_string()),
+        })
     }
 
     fn clear(&mut self) -> io::Result<()> {
@@ -155,24 +189,13 @@ impl Storage for Store {
     }
 
     fn vacuum(&self) -> io::Result<()> {
-        let file_exts_to_vacuum = vec![LOG_FILE_EXT, DATA_FILE_EXT];
-        let keys_to_delete = self.get_keys_to_delete()?;
+        let lock = Arc::clone(&self.del_file_lock);
+        let res = match lock.lock() {
+            Ok(_) => self.unlocked_vacuum(),
+            Err(e) => Err(io::Error::new(ErrorKind::Other, e.to_string())),
+        };
 
-        if keys_to_delete.len() == 0 {
-            return Ok(());
-        }
-
-        let files_to_vacuum = utils::get_files_with_extensions(&self.db_path, file_exts_to_vacuum)?;
-
-        for filename in files_to_vacuum {
-            let path = self.db_path.join(filename);
-            utils::delete_key_values_from_file(&path, &keys_to_delete)?;
-        }
-
-        // Clear del file
-        fs::write(&self.del_file_path, "")?;
-
-        Ok(())
+        res
     }
 }
 
@@ -204,7 +227,38 @@ impl Store {
             current_log_file_path: PathBuf::new(),
             del_file_path,
             index_file_path,
+            cache_lock: Arc::new(Lock::new(1)),
+            del_file_lock: Arc::new(Lock::new(1)),
         }
+    }
+
+    /// This does the actual vacuuming of removing keys that have benn marked for deletion
+    /// However, it does not employ any lock on the files. As such, calling it directly without
+    /// securing the del_file_lock might cause data races
+    ///
+    /// # Errors
+    ///
+    /// See [Store::get_keys_to_delete], [crate::utils::get_files_with_extensions],
+    /// [crate::utils::delete_key_values_from_file] and [std::fs::write]
+    fn unlocked_vacuum(&self) -> io::Result<()> {
+        let file_exts_to_vacuum = vec![LOG_FILE_EXT, DATA_FILE_EXT];
+        let keys_to_delete = self.get_keys_to_delete()?;
+
+        if keys_to_delete.len() == 0 {
+            return Ok(());
+        }
+
+        let files_to_vacuum = utils::get_files_with_extensions(&self.db_path, file_exts_to_vacuum)?;
+
+        for filename in files_to_vacuum {
+            let path = self.db_path.join(filename);
+            utils::delete_key_values_from_file(&path, &keys_to_delete)?;
+        }
+
+        // Clear del file
+        fs::write(&self.del_file_path, "")?;
+
+        Ok(())
     }
 
     /// Creates a new index file if there is no index file in the database folder
@@ -331,17 +385,18 @@ impl Store {
     }
 
     /// Gets the timestamped key corresponding to the given key in the index
-    /// If there is none, it creates a new timestamped key and adds it to the index and the index file
+    /// If there is none, it creates a new timestamped key and adds it to the index file
+    /// It returns a tuple of the key and a boolean of whether the key is new or not
     ///
     /// # Errors
     ///
     /// It will return a [CorruptedDataError] if it encounters any issues with creating timestamp
     /// or adding it to the index file
     ///
-    /// [CorruptedDataError]: crate::errors::CorruptedDataError
-    fn get_timestamped_key(&mut self, key: &str) -> io::Result<String> {
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn get_timestamped_key(&mut self, key: &str) -> io::Result<(String, bool)> {
         if let Some(k) = self.index.get(key) {
-            return Ok(k.to_string());
+            return Ok((k.to_string(), false));
         }
 
         let timestamp = utils::get_current_timestamp_str()?;
@@ -351,10 +406,9 @@ impl Store {
             key, KEY_VALUE_SEPARATOR, timestamped_key, TOKEN_SEPARATOR
         );
 
-        self.index.insert(key.to_string(), timestamped_key.clone());
         utils::append_to_file(&self.index_file_path, &new_file_entry)?;
 
-        Ok(timestamped_key)
+        Ok((timestamped_key, true))
     }
 
     /// Removes the key and timestamped key from the index
@@ -378,19 +432,38 @@ impl Store {
     ///
     /// # Error
     ///
-    /// See [Store::save_key_value_pair_to_memtable], [Store::load_cache_containing_key],
-    /// [Store::save_key_value_pair_to_cache]
-    // #[inline]
-    fn save_key_value_pair(&mut self, timestamped_key: &str, value: &str) -> io::Result<()> {
-        if timestamped_key.to_string() >= self.current_log_file {
-            return self.save_key_value_pair_to_memtable(timestamped_key, value);
+    /// Retruns a [CorruptedDataError] if there is any issue with file IO as data is saved to disk
+    ///
+    /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
+    fn save_key_value_pair(&mut self, timestamped_key: &str, value: &str) -> ckydb::Result<()> {
+        let timestamped_key = timestamped_key.to_owned();
+        let value = value.to_owned();
+
+        if timestamped_key >= self.current_log_file {
+            // FIXME: This to_string and map should not be done everytime even when there is no error
+            let old_value = self.memtable.get(&timestamped_key).map(|v| v.to_string());
+
+            return self
+                .save_key_value_pair_to_memtable(timestamped_key, value)
+                .or(Err(CorruptedDataError { data: old_value }));
         }
 
-        if !self.cache.is_in_range(timestamped_key) {
-            self.load_cache_containing_key(timestamped_key)?;
+        let lock = Arc::clone(&self.cache_lock);
+        if let Ok(_) = lock.lock() {
+            if !self.cache.is_in_range(&timestamped_key) {
+                self.load_cache_containing_key(&timestamped_key)
+                    .or(Err(CorruptedDataError { data: None }))?;
+            }
+
+            let old_value = self.cache.data.get(&timestamped_key).map(|v| v.to_string());
+            return self
+                .save_key_value_pair_to_cache(timestamped_key, value)
+                .or(Err(CorruptedDataError { data: old_value }));
         }
 
-        self.save_key_value_pair_to_cache(timestamped_key, value)
+        Err(CorruptedDataError {
+            data: Some("failed to get lock on cache".to_string()),
+        })
     }
 
     /// Deletes the given key and its value from
@@ -423,8 +496,8 @@ impl Store {
     // #[inline]
     fn save_key_value_pair_to_memtable(
         &mut self,
-        timestamped_key: &str,
-        value: &str,
+        timestamped_key: String,
+        value: String,
     ) -> io::Result<()> {
         self.memtable
             .insert(timestamped_key.to_string(), value.to_string());
@@ -441,8 +514,8 @@ impl Store {
     // #[inline]
     fn save_key_value_pair_to_cache(
         &mut self,
-        timestamped_key: &str,
-        value: &str,
+        timestamped_key: String,
+        value: String,
     ) -> io::Result<()> {
         self.cache.update(timestamped_key, value);
         self.persist_cache_to_disk()
@@ -458,16 +531,15 @@ impl Store {
     /// [std::fs::read_to_string] and [utils::extract_key_values_from_str]
     // #[inline]
     fn load_cache_containing_key(&mut self, key: &str) -> io::Result<()> {
-        let (start, end) = self.get_timestamp_range_for_key(key).ok_or(io::Error::new(
-            io::ErrorKind::InvalidData,
-            CorruptedDataError,
-        ))?;
+        let (start, end) = self
+            .get_timestamp_range_for_key(key)
+            .ok_or(io::Error::new(io::ErrorKind::InvalidData, key.to_string()))?;
         // get data from disk
         let file_path = self.db_path.join(format!("{}.{}", start, DATA_FILE_EXT));
         let content_str = fs::read_to_string(&file_path)?;
         let map_data = utils::extract_key_values_from_str(&content_str)?;
 
-        self.cache = Cache::new(map_data, &start, &end);
+        self.cache = Cache::new(map_data, start, end);
         Ok(())
     }
 
@@ -539,22 +611,34 @@ impl Store {
     ///
     /// Obviously [crate::errors::CorruptedDataError] has a very minute chance of happening
     // #[inline]
-    fn get_value_for_key(&mut self, timestamped_key: &str) -> Result<String, CorruptedDataError> {
-        if timestamped_key.to_string() >= self.current_log_file {
+    fn get_value_for_key(&mut self, timestamped_key: String) -> ckydb::Result<String> {
+        if timestamped_key >= self.current_log_file {
             let value = self
                 .memtable
-                .get(timestamped_key)
-                .ok_or(CorruptedDataError)?;
+                .get(&timestamped_key)
+                .ok_or(CorruptedDataError {
+                    data: Some(format!("key {} missing in memtable", timestamped_key)),
+                })?;
             return Ok(value.to_string());
         }
 
-        if !self.cache.is_in_range(timestamped_key) {
-            self.load_cache_containing_key(timestamped_key)
-                .or(Err(CorruptedDataError))?;
+        let lock = Arc::clone(&self.cache_lock);
+
+        if let Ok(_) = lock.lock() {
+            if !self.cache.is_in_range(&timestamped_key) {
+                self.load_cache_containing_key(&timestamped_key)?;
+            }
+
+            let value = self.cache.get(&timestamped_key).ok_or(CorruptedDataError {
+                data: Some(format!("key {} missing in cache", timestamped_key)),
+            })?;
+
+            return Ok(value.to_string());
         }
 
-        let value = self.cache.get(timestamped_key).ok_or(CorruptedDataError)?;
-        Ok(value.to_string())
+        Err(CorruptedDataError {
+            data: Some("failed to get lock to cache".to_string()),
+        })
     }
 
     /// Deletes all files in the database folder
@@ -806,8 +890,8 @@ mod test {
                     String::from("23 months"),
                 ),
             ]),
-            DATA_FILES[0].trim_end_matches(".cky"),
-            DATA_FILES[1].trim_end_matches(".cky"),
+            DATA_FILES[0].trim_end_matches(".cky").to_string(),
+            DATA_FILES[1].trim_end_matches(".cky").to_string(),
         );
 
         let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);

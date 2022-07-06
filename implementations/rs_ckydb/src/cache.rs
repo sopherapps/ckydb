@@ -23,7 +23,7 @@ pub(crate) trait Caching {
 
     /// Updates the value corresponding to the passed `key` with the
     /// given `value`
-    fn update(&mut self, key: &str, value: &str);
+    fn update(&mut self, key: String, value: String);
 
     /// Retrieves the value corresponding to the given `key`
     fn get(&self, key: &str) -> Option<&String>;
@@ -42,12 +42,8 @@ pub(crate) struct Cache {
 impl Cache {
     /// Initializes a new Cache with the given `data`, and bounds (`start`, `end`)
     // #[inline]
-    pub(crate) fn new(data: HashMap<String, String>, start: &str, end: &str) -> Cache {
-        Cache {
-            data,
-            start: start.to_string(),
-            end: end.to_string(),
-        }
+    pub(crate) fn new(data: HashMap<String, String>, start: String, end: String) -> Cache {
+        Cache { data, start, end }
     }
 
     /// Initializes a new empty Cache with start: "0", end: "0" and data as empty Hashmap
@@ -62,23 +58,22 @@ impl Cache {
 }
 
 impl Caching for Cache {
-    // #[inline]
+    #[inline(always)]
     fn is_in_range(&self, key: &str) -> bool {
-        let key = key.to_string();
-        self.start <= key && key <= self.end
+        &self.start[..] <= key && key <= &self.end[..]
     }
 
-    // #[inline]
+    #[inline(always)]
     fn remove(&mut self, key: &str) {
         self.data.remove(key);
     }
 
-    // #[inline]
-    fn update(&mut self, key: &str, value: &str) {
-        self.data.insert(key.to_string(), value.to_string());
+    #[inline(always)]
+    fn update(&mut self, key: String, value: String) {
+        self.data.insert(key, value);
     }
 
-    // #[inline]
+    #[inline(always)]
     fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
     }
