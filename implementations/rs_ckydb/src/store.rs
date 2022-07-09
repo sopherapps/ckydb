@@ -4,6 +4,7 @@ use crate::constants::{
 };
 use crate::errors as ckydb;
 use crate::errors::Error::{CorruptedDataError, NotFoundError};
+use crate::strings::TokenizedString;
 use crate::sync::Lock;
 use crate::utils;
 use std::collections::HashMap;
@@ -94,7 +95,7 @@ pub(crate) struct Store {
     db_path: PathBuf,
     max_file_size_kb: f64,
     cache: Cache,
-    memtable: HashMap<String, String>,
+    memtable: TokenizedString,
     index: HashMap<String, String>,
     data_files: Vec<String>,
     current_log_file: String,
@@ -129,9 +130,8 @@ impl Storage for Store {
 
         if let Err(err) = self.save_key_value_pair(&timestamped_key, value) {
             if is_new_key {
-                self.delete_key_value_pair_if_exists("&timestamped_key.clone()")
-                    .ok();
-                self.remove_timestamped_key_for_key_if_exists("key").ok();
+                self.delete_key_value_pair_if_exists(&timestamped_key).ok();
+                self.remove_timestamped_key_for_key_if_exists(key).ok();
             } else if let Some(old_value) = err.get_data() {
                 self.save_key_value_pair(&timestamped_key, &old_value).ok();
             }
@@ -349,7 +349,7 @@ impl Store {
     // #[inline]
     fn load_memtable_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.current_log_file_path)?;
-        self.memtable = utils::extract_key_values_from_str(&content)?;
+        self.memtable = TokenizedString::from(content);
         Ok(())
     }
 
@@ -440,10 +440,13 @@ impl Store {
 
         if timestamped_key >= self.current_log_file {
             // FIXME: This to_string and map should not be done everytime even when there is no error
-            let old_value = self.memtable.get(&timestamped_key).map(|v| v.to_string());
+            let old_value = match self.memtable.get(&timestamped_key) {
+                Ok(v) => Some(v.to_owned()),
+                Err(_) => None,
+            };
 
             return self
-                .save_key_value_pair_to_memtable(timestamped_key, value)
+                .save_key_value_pair_to_memtable(&timestamped_key, &value)
                 .or(Err(CorruptedDataError { data: old_value }));
         }
 
@@ -475,17 +478,22 @@ impl Store {
     ///
     /// See [Store::persist_cache_to_disk] and [utils::persist_map_data_to_file]
     // #[inline]
-    fn delete_key_value_pair_if_exists(&mut self, key: &str) -> io::Result<()> {
+    fn delete_key_value_pair_if_exists(&mut self, key: &str) -> ckydb::Result<()> {
         if self.cache.is_in_range(key) {
-            self.cache
-                .remove(key)
-                .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
-            return self.persist_cache_to_disk();
+            self.cache.remove(key)?;
+            return match self.persist_cache_to_disk() {
+                Err(err) => Err(ckydb::Error::from(err)),
+                Ok(_) => Ok(()),
+            };
         }
 
         if key.to_string() >= self.current_log_file {
-            self.memtable.remove(key);
-            return utils::persist_map_data_to_file(&self.memtable, &self.current_log_file_path);
+            self.memtable.delete(key)?;
+            let result = fs::write(&self.current_log_file_path, self.memtable.to_string());
+            return match result {
+                Err(err) => Err(ckydb::Error::from(err)),
+                Ok(_) => Ok(()),
+            };
         }
 
         Ok(())
@@ -500,12 +508,13 @@ impl Store {
     // #[inline]
     fn save_key_value_pair_to_memtable(
         &mut self,
-        timestamped_key: String,
-        value: String,
+        timestamped_key: &str,
+        value: &str,
     ) -> io::Result<()> {
         self.memtable
-            .insert(timestamped_key.to_string(), value.to_string());
-        utils::persist_map_data_to_file(&self.memtable, &self.current_log_file_path)?;
+            .insert(timestamped_key, value)
+            .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
+        fs::write(&self.current_log_file_path, self.memtable.to_string())?;
         self.roll_log_file_if_too_big()
     }
 
@@ -563,7 +572,7 @@ impl Store {
                 self.db_path.join(&new_data_filename),
             )?;
 
-            self.memtable.clear();
+            self.memtable = Default::default();
             self.data_files.push(self.current_log_file.clone());
             // endure the data files are sorted
             self.data_files.sort();
@@ -618,12 +627,7 @@ impl Store {
     // #[inline]
     fn get_value_for_key(&mut self, timestamped_key: String) -> ckydb::Result<String> {
         if timestamped_key >= self.current_log_file {
-            let value = self
-                .memtable
-                .get(&timestamped_key)
-                .ok_or(CorruptedDataError {
-                    data: Some(format!("key {} missing in memtable", timestamped_key)),
-                })?;
+            let value = self.memtable.get(&timestamped_key)?;
             return Ok(value.to_string());
         }
 
@@ -660,6 +664,7 @@ mod test {
     use crate::cache::{Cache, Caching};
     use crate::constants::{DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, TOKEN_SEPARATOR};
     use crate::store::{Storage, Store};
+    use crate::strings::TokenizedString;
     use crate::utils;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -688,15 +693,7 @@ mod test {
             ]
             .map(|(k, v)| (k.to_string(), v.to_string())),
         );
-        let expected_memtable = HashMap::from(
-            [
-                ("1655404770518678-goat", "678 months"),
-                ("1655404670510698-hen", "567 months"),
-                ("1655404770534578-pig", "70 months"),
-                ("1655403775538278-fish", "8990 months"),
-            ]
-            .map(|(k, v)| (k.to_string(), v.to_string())),
-        );
+        let expected_memtable = TokenizedString::from(String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&"));
         let expected_data_files = DATA_FILES
             .map(|filename| filename.trim_end_matches(".cky").to_string())
             .to_vec();
@@ -731,6 +728,7 @@ mod test {
         let index_file_path = db_path.join(INDEX_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
         let empty_map: HashMap<String, String> = Default::default();
+        let empty_tokenized_string: TokenizedString = Default::default();
 
         utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
         store.load().expect("loads store");
@@ -747,7 +745,7 @@ mod test {
         assert_eq!(expected_cache, store.cache);
         assert_ne!("".to_string(), store.current_log_file);
         assert_eq!(empty_map, store.index);
-        assert_eq!(empty_map, store.memtable);
+        assert_eq!(empty_tokenized_string, store.memtable);
         assert_eq!(EMPTY_LIST, store.data_files);
         assert_eq!(expected_files, actual_files);
         assert_eq!(index_file_path, store.index_file_path);
@@ -1002,6 +1000,7 @@ mod test {
         let del_file_path = db_path.join(DEL_FILENAME);
         let empty_map: HashMap<String, String> = Default::default();
         let empty_list: Vec<String> = Default::default();
+        let empty_tokenized_string: TokenizedString = Default::default();
 
         utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
         utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data in db");
@@ -1019,7 +1018,7 @@ mod test {
         assert_eq!(expected_cache, store.cache);
         assert_ne!("".to_string(), store.current_log_file);
         assert_eq!(empty_map, store.index);
-        assert_eq!(empty_map, store.memtable);
+        assert_eq!(empty_tokenized_string, store.memtable);
         assert_eq!(empty_list, store.data_files);
         assert_eq!(expected_files, actual_files);
         assert_eq!(index_file_path, store.index_file_path);

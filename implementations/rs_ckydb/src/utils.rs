@@ -239,27 +239,6 @@ fn has_any_of_prefixes(phrase: &str, prefixes: &Vec<String>) -> bool {
     false
 }
 
-/// Overwrites the data in the file at pathToFile with the
-/// equivalent of the map data passed
-///
-/// # Errors
-///
-/// See [fs::write]
-// #[inline]
-pub(crate) fn persist_map_data_to_file<P: AsRef<Path>>(
-    data: &HashMap<String, String>,
-    path: P,
-) -> io::Result<()> {
-    let content = data.into_iter().fold("".to_string(), |accum, (k, v)| {
-        format!(
-            "{}{}{}{}{}",
-            accum, k, KEY_VALUE_SEPARATOR, v, TOKEN_SEPARATOR
-        )
-    });
-
-    fs::write(path, content)
-}
-
 /// Returns the size of the file at the given `path` in kilobytes
 ///
 /// # Errors

@@ -55,7 +55,7 @@ impl Cache {
     // #[inline]
     pub(crate) fn new_empty() -> Cache {
         Cache {
-            data: TokenizedString::from("".to_string()),
+            data: Default::default(),
             start: "0".to_string(),
             end: "0".to_string(),
         }

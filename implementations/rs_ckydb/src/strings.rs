@@ -11,6 +11,15 @@ pub(crate) struct TokenizedString {
     offsets: Vec<[(usize, usize); 2]>,
 }
 
+impl Default for TokenizedString {
+    fn default() -> Self {
+        TokenizedString {
+            kv_string: "".to_owned(),
+            offsets: Default::default(),
+        }
+    }
+}
+
 impl TokenizedString {
     /// Returns a map of the key, values that are found in this TokenizedString
     pub(crate) fn map(&self) -> HashMap<&str, &str> {
