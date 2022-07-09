@@ -5,7 +5,8 @@ use crate::errors as ckydb;
 use crate::errors::Error::{CorruptedDataError, NotFoundError};
 use std::collections::HashMap;
 
-struct TokenizedString {
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) struct TokenizedString {
     kv_string: String,
     offsets: Vec<[(usize, usize); 2]>,
 }

@@ -454,10 +454,13 @@ impl Store {
                     .or(Err(CorruptedDataError { data: None }))?;
             }
 
-            let old_value = self.cache.data.get(&timestamped_key).map(|v| v.to_string());
+            let old_value = self.cache.data.get(&timestamped_key)?;
+            let old_value = old_value.to_owned();
             return self
-                .save_key_value_pair_to_cache(timestamped_key, value)
-                .or(Err(CorruptedDataError { data: old_value }));
+                .save_key_value_pair_to_cache(&timestamped_key, &value)
+                .or(Err(CorruptedDataError {
+                    data: Some(old_value),
+                }));
         }
 
         Err(CorruptedDataError {
@@ -474,7 +477,9 @@ impl Store {
     // #[inline]
     fn delete_key_value_pair_if_exists(&mut self, key: &str) -> io::Result<()> {
         if self.cache.is_in_range(key) {
-            self.cache.remove(key);
+            self.cache
+                .remove(key)
+                .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
             return self.persist_cache_to_disk();
         }
 
@@ -513,10 +518,12 @@ impl Store {
     // #[inline]
     fn save_key_value_pair_to_cache(
         &mut self,
-        timestamped_key: String,
-        value: String,
+        timestamped_key: &str,
+        value: &str,
     ) -> io::Result<()> {
-        self.cache.update(timestamped_key, value);
+        self.cache
+            .update(timestamped_key, value)
+            .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
         self.persist_cache_to_disk()
     }
 
@@ -536,9 +543,8 @@ impl Store {
         // get data from disk
         let file_path = self.db_path.join(format!("{}.{}", start, DATA_FILE_EXT));
         let content_str = fs::read_to_string(&file_path)?;
-        let map_data = utils::extract_key_values_from_str(&content_str)?;
 
-        self.cache = Cache::new(map_data, start, end);
+        self.cache = Cache::new(content_str, start, end);
         Ok(())
     }
 
@@ -577,7 +583,7 @@ impl Store {
         let data_file_path = self
             .db_path
             .join(format!("{}.{}", self.cache.start, DATA_FILE_EXT));
-        utils::persist_map_data_to_file(&self.cache.data, &data_file_path)
+        fs::write(&data_file_path, &self.cache.data.to_string())
     }
 
     /// Returns the range of timestamps between which
@@ -628,9 +634,7 @@ impl Store {
                 self.load_cache_containing_key(&timestamped_key)?;
             }
 
-            let value = self.cache.get(&timestamped_key).ok_or(CorruptedDataError {
-                data: Some(format!("key {} missing in cache", timestamped_key)),
-            })?;
+            let value = self.cache.get(&timestamped_key)?;
 
             return Ok(value.to_string());
         }
@@ -879,16 +883,7 @@ mod test {
         let (key, expected_value) = ("cow", "500 months");
         let expected_initial_cache = Cache::new_empty();
         let expected_final_cache = Cache::new(
-            HashMap::from([
-                (
-                    String::from("1655375120328185000-cow"),
-                    String::from("500 months"),
-                ),
-                (
-                    String::from("1655375120328185100-dog"),
-                    String::from("23 months"),
-                ),
-            ]),
+            String::from("1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&"),
             DATA_FILES[0].trim_end_matches(".cky").to_string(),
             DATA_FILES[1].trim_end_matches(".cky").to_string(),
         );
