@@ -133,8 +133,7 @@ impl Storage for Store {
                     .ok();
                 self.remove_timestamped_key_for_key_if_exists("key").ok();
             } else if let Some(old_value) = err.get_data() {
-                self.save_key_value_pair(&timestamped_key, &"old_value")
-                    .ok();
+                self.save_key_value_pair(&timestamped_key, &old_value).ok();
             }
 
             return Err(err);
