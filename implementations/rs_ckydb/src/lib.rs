@@ -5,6 +5,7 @@ mod constants;
 mod controller;
 mod errors;
 mod store;
+mod strings;
 mod sync;
 mod utils;
 

@@ -4,7 +4,7 @@ use std::{error, io, result};
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     /// Error thrown when key is not found in store
     NotFoundError { key: String },
