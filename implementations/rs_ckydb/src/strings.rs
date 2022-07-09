@@ -13,24 +13,29 @@ struct TokenizedString {
 impl TokenizedString {
     /// Returns a map of the key, values that are found in this TokenizedString
     pub(crate) fn map(&self) -> HashMap<&str, &str> {
-        let mut map: HashMap<&str, &str> = HashMap::with_capacity(self.offsets.len());
+        let num_of_offsets = self.offsets.len();
+        let mut map = HashMap::with_capacity(num_of_offsets);
 
-        for [(k_start, k_end), (v_start, v_end)] in &self.offsets {
-            map.insert(
+        for i in 0..num_of_offsets {
+            let [(k_start, k_end), (v_start, v_end)] = &self.offsets[i];
+            let (key, value) = (
                 &self.kv_string[*k_start..*k_end],
                 &self.kv_string[*v_start..*v_end],
             );
+            map.insert(key, value);
         }
-
         map
     }
 
     /// Returns a vector of the keys that are found in this TokenizedString
     pub(crate) fn keys(&self) -> Vec<&str> {
-        let mut keys: Vec<&str> = Vec::with_capacity(self.offsets.len());
+        let num_of_offsets = self.offsets.len();
+        let mut keys = Vec::with_capacity(num_of_offsets);
 
-        for [(k_start, k_end), _] in &self.offsets {
-            keys.push(&self.kv_string[*k_start..*k_end]);
+        for i in 0..num_of_offsets {
+            let [(k_start, k_end), _] = &self.offsets[i];
+            let key = &self.kv_string[*k_start..*k_end];
+            keys.push(key);
         }
 
         keys
@@ -44,15 +49,20 @@ impl TokenizedString {
     /// the offsets
     /// - Returns a [crate::errors::Error::NotFoundError] when the key does not exist
     pub(crate) fn delete(&mut self, key: &str) -> ckydb::Result<()> {
-        // TODO: Later add some caching, memoizing; so as not to recalculate the keys
-        for i in 0..self.offsets.len() {
-            let [(k_start, k_end), (_, v_end)] = self.offsets[i];
-            if &self.kv_string[k_start..k_end] == key {
-                let end = v_end + TOKEN_SEPARATOR_LENGTH;
-                self.___replace_kv_string_section(k_start, end, "")?;
-                self.__remove_offset(i);
-                return Ok(());
-            }
+        let offset_index = self.__get_offset_index_for_key(key);
+
+        if let Some(i) = offset_index {
+            let [(k_start, _), (_, v_end)] = self.offsets.get(i).ok_or(CorruptedDataError {
+                data: Some("offsets out of sync with index in TokenizedString".to_string()),
+            })?;
+
+            let k_start = k_start.to_owned();
+            let v_end = v_end.to_owned();
+
+            let end = v_end + TOKEN_SEPARATOR_LENGTH;
+            self.___replace_kv_string_section(k_start, end, "")?;
+            self.__remove_offset(i);
+            return Ok(());
         }
 
         Err(NotFoundError {
@@ -64,12 +74,24 @@ impl TokenizedString {
     ///
     /// # Errors
     ///
-    /// Returns a [crate::errors::Error::NotFoundError] when the key does not exist
+    /// - Returns a [crate::errors::Error::CorruptedDataError] if the inner string is out of sync with
+    /// the offsets
+    /// - Returns a [crate::errors::Error::NotFoundError] when the key does not exist
     pub(crate) fn get(&self, key: &str) -> ckydb::Result<&str> {
-        let map = self.map();
-        map.get(key).and_then(|v| Some(*v)).ok_or(NotFoundError {
-            key: key.to_owned(),
-        })
+        let offset_index = self.__get_offset_index_for_key(key);
+
+        match offset_index {
+            None => Err(NotFoundError {
+                key: key.to_owned(),
+            }),
+            Some(i) => {
+                let [_, (v_start, v_end)] = self.offsets.get(i).ok_or(CorruptedDataError {
+                    data: Some("offsets out of sync with index in TokenizedString".to_string()),
+                })?;
+
+                Ok(&self.kv_string[*v_start..*v_end])
+            }
+        }
     }
 
     /// Inserts a key-value pair into this TokenizedString
@@ -79,17 +101,42 @@ impl TokenizedString {
     /// Returns a [crate::errors::Error::CorruptedDataError] if the inner string is out of sync with
     /// the offsets
     pub(crate) fn insert(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
-        for i in 0..self.offsets.len() {
-            let [(k_start, k_end), (v_start, v_end)] = self.offsets[i];
-            if &self.kv_string[k_start..k_end] == key {
-                self.___replace_kv_string_section(v_start, v_end, value)?;
-                self.__replace_offset(i, [(k_start, k_end), (v_start, v_start + value.len())]);
-                return Ok(());
-            }
+        let offset_index = self.__get_offset_index_for_key(key);
+
+        if let Some(i) = offset_index {
+            let [(k_start, k_end), (v_start, v_end)] =
+                self.offsets.get(i).ok_or(CorruptedDataError {
+                    data: Some("offsets out of sync with index in TokenizedString".to_string()),
+                })?;
+
+            let k_start = k_start.to_owned();
+            let v_start = v_start.to_owned();
+            let k_end = k_end.to_owned();
+            let v_end = v_end.to_owned();
+
+            self.___replace_kv_string_section(v_start, v_end, value)?;
+            self.__replace_offset(i, [(k_start, k_end), (v_start, (v_start) + value.len())]);
+            return Ok(());
         }
 
         self.__append_key_value(key, value);
         Ok(())
+    }
+
+    /// Gets the index in the offset vector for the given key.
+    /// It returns None if the key does not exist
+    #[inline(always)]
+    fn __get_offset_index_for_key(&self, key: &str) -> Option<usize> {
+        let mut index_to_del: Option<usize> = None;
+        for i in 0..self.offsets.len() {
+            let [(k_start, k_end), _] = self.offsets[i];
+            if &self.kv_string[k_start..k_end] == key {
+                index_to_del = Some(i);
+                break;
+            }
+        }
+
+        index_to_del
     }
 
     /// Appends the key value pair to the end of this instance
@@ -277,7 +324,11 @@ mod test {
         let missing_keys = ["foo", "bar", "milk"];
 
         for (k, v) in expected_records {
-            assert_eq!(v, token_string.get(k).expect(&format!("get key: {}", k)));
+            let got = token_string
+                .get(k)
+                .expect(&format!("get key: {}", k))
+                .to_owned();
+            assert_eq!(v, got);
         }
 
         for key in missing_keys {
