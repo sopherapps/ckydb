@@ -109,6 +109,7 @@ cargo bench
 
 - The latest benchmarking results are:
 
+without thread-safety
 ```shell
 set hey English         time:   [137.62 us 141.90 us 147.99 us]                            
 set hi English          time:   [192.54 us 225.35 us 261.72 us]                           
@@ -140,6 +141,38 @@ delete mulimuta         time:   [23.381 ns 23.572 ns 23.771 ns]
 clear                   time:   [573.03 us 596.06 us 620.95 us]                  
 ```
 
+With thread-safety:
+```shell
+set hey English         time:   [123.60 us 126.16 us 129.31 us]                            
+set hi English          time:   [122.21 us 125.73 us 131.24 us]                           
+set salut French        time:   [123.64 us 127.10 us 132.00 us]                             
+set bonjour French      time:   [122.87 us 124.85 us 127.17 us]                               
+set hola Spanish        time:   [123.16 us 125.64 us 128.77 us]                             
+set oi Portuguese       time:   [126.61 us 130.24 us 134.88 us]                              
+set mulimuta Runyoro    time:   [126.50 us 128.50 us 130.73 us]                                 
+update hey to Jane      time:   [123.88 us 125.73 us 127.96 us]                               
+update hi to John       time:   [124.16 us 125.88 us 127.91 us]                              
+update hola to Santos   time:   [122.97 us 126.29 us 131.77 us]                                  
+update oi to Ronaldo    time:   [124.59 us 126.78 us 129.36 us]                                 
+update mulimuta to Aliguma                                                                             
+                        time:   [1.0058 us 1.0074 us 1.0093 us]
+get hey                 time:   [349.69 ns 350.17 ns 350.76 ns]                    
+get hi                  time:   [343.49 ns 344.09 ns 344.92 ns]                   
+get salut               time:   [349.67 ns 350.65 ns 352.03 ns]                      
+get bonjour             time:   [355.24 ns 355.59 ns 355.98 ns]                        
+get hola                time:   [349.71 ns 350.39 ns 351.19 ns]                     
+get oi                  time:   [343.97 ns 344.64 ns 345.38 ns]                   
+get mulimuta            time:   [352.94 ns 353.38 ns 353.88 ns]                         
+delete hey              time:   [152.95 ns 153.13 ns 153.34 ns]                       
+delete hi               time:   [152.84 ns 153.01 ns 153.22 ns]                      
+delete salut            time:   [152.65 ns 152.92 ns 153.30 ns]                         
+delete bonjour          time:   [157.33 ns 157.61 ns 157.98 ns]                           
+delete hola             time:   [151.63 ns 151.97 ns 152.36 ns]                        
+delete oi               time:   [152.15 ns 152.34 ns 152.54 ns]                      
+delete mulimuta         time:   [153.91 ns 154.19 ns 154.57 ns]                            
+clear                   time:   [563.74 us 569.17 us 575.02 us]                  
+```
+
 ## Under the Hood
 
 - Every key has a TIMESTAMP prefix, added to it on creation. This TIMESTAMPED key is the one used to store data in a
@@ -159,7 +192,7 @@ clear                   time:   [573.03 us 596.06 us 620.95 us]
 - The name of the current log (`current_log_file`) file is also kept in memory, and updated when a new log file is
   created.
 - There is also a ".del" file that holds all the `key: TIMESTAMPED-key` pairs that have been marked for deletion.
-- At a predefined interval (5 minutes by default), a background task deletes the values from ".cky" and ".log" files
+- When the keys marked for deletion exceed a given batch size (currently this is 5), we delete their values from ".cky" and ".log" files
   corresponding to the `key: TIMESTAMPED-key` pairs found in the ".del" file. Each deleted pair is then removed from
   the ".del" file.
 - On initial load, any keys in .del should have their values deleted in the corresponding ".log" or ".cky" files
@@ -251,7 +284,7 @@ weird errors. However, the escaping is expensive and it is thus turned off by de
 - [ ] Inline many utils
 - [ ] Remove eagerly evaluated result handlers (i.e. use '.or_else' instead of 'or')
 - [ ] Remove unnecessary cloning
-- [ ] Reuse Cache, CkyVector and CkyMap instances instead of reassigning them when resetting them.
+- [x] Reuse Cache, CkyVector and CkyMap instances instead of reassigning them when resetting them.
 - [ ] Fix vacuum to use CkyVector
 - [ ] Use &str as args where possible; and remove any of their cloning
 - [x] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)

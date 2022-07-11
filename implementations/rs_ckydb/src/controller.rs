@@ -1,11 +1,7 @@
 use crate::errors as ckydb;
 use crate::store::{Storage, Store};
 use crate::sync::Lock;
-use std::io::ErrorKind;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::Duration;
-use std::{io, thread};
+use std::io;
 
 /// `Controller` trait represents the basic expectation for the public API for the database
 ///
@@ -82,15 +78,9 @@ pub trait Controller {
 /// `Ckydb` is the public API for the database.
 /// It implements the [Controller] trait as well as the [Drop] trait
 pub struct Ckydb {
-    tasks: Option<Vec<JoinHandle<()>>>,
     store: Store,
-    mut_lock: Arc<Lock>,
-    vacuum_interval_sec: f64,
+    mut_lock: Lock,
     is_open: bool,
-    tx: mpsc::Sender<Signal>,
-    rv: Arc<Mutex<mpsc::Receiver<Signal>>>,
-    db_path: String,
-    max_file_size_kb: f64,
 }
 
 impl Ckydb {
@@ -101,20 +91,13 @@ impl Ckydb {
     /// is not accessible
     ///
     /// [io::Error]: std::io::Error
-    fn new(db_path: &str, max_file_size_kb: f64, vacuum_interval_sec: f64) -> io::Result<Ckydb> {
+    fn new(db_path: &str, max_file_size_kb: f64, _vacuum_interval_sec: f64) -> io::Result<Ckydb> {
         let mut store = Store::new(db_path, max_file_size_kb);
-        let (tx, rv) = mpsc::channel();
 
         store.load().and(Ok(Ckydb {
-            tasks: Some(vec![]),
             store,
-            vacuum_interval_sec,
             is_open: false,
-            tx,
-            rv: Arc::new(Mutex::new(rv)),
-            db_path: db_path.to_string(),
-            max_file_size_kb,
-            mut_lock: Arc::new(Lock::new(1)),
+            mut_lock: Lock::new(1),
         }))
     }
 }
@@ -124,48 +107,7 @@ impl Controller for Ckydb {
         if self.is_open {
             return Ok(());
         }
-        let db_path = self.db_path.clone();
-        let vacuum_interval_sec = self.vacuum_interval_sec;
-        let rv = Arc::clone(&self.rv);
-        let mut_lock = Arc::clone(&self.mut_lock);
-        let mut shadow_store = Store::new(&db_path, self.max_file_size_kb);
-        shadow_store.load()?;
 
-        let vacuum_task = thread::spawn(move || {
-            let interval = Duration::from_secs_f64(vacuum_interval_sec);
-            let wait_interval_as_millis = 100;
-            let number_of_waits = interval.as_millis() / wait_interval_as_millis;
-            let wait_interval = Duration::from_millis(wait_interval_as_millis as u64);
-            let mut wait = 0 as u128;
-
-            loop {
-                let rv = rv.lock().expect("get rv lock");
-                let signal = rv.try_recv().unwrap_or(Signal::Continue);
-
-                match signal {
-                    Signal::Stop => break,
-                    Signal::Continue => {
-                        if wait < number_of_waits {
-                            thread::sleep(wait_interval);
-                        } else {
-                            // First get the mut_lock so that you don't cause data races when
-                            // another mutation is taking place
-                            if let Ok(_) = mut_lock.lock() {
-                                shadow_store
-                                    .vacuum()
-                                    .unwrap_or_else(|err| println!("vacuum error: {}", err));
-                            }
-
-                            wait = 0;
-                        }
-                    }
-                }
-
-                wait += 1;
-            }
-        });
-
-        self.tasks = Some(vec![vacuum_task]);
         self.is_open = true;
 
         Ok(())
@@ -174,18 +116,6 @@ impl Controller for Ckydb {
     fn close(&mut self) -> io::Result<()> {
         if !self.is_open {
             return Ok(());
-        }
-
-        if let Some(tasks) = self.tasks.take() {
-            for task in tasks {
-                self.tx
-                    .send(Signal::Stop)
-                    .or_else(|err| Err(io::Error::new(ErrorKind::Other, err)))?;
-
-                while !task.is_finished() {
-                    thread::sleep(Duration::from_millis(100));
-                }
-            }
         }
 
         self.is_open = false;
@@ -249,8 +179,6 @@ mod tests {
     use crate::{constants, utils};
     use serial_test::serial;
     use std::collections::HashMap;
-    use std::thread::sleep;
-    use std::time::Duration;
 
     const DB_PATH: &str = "test_controller_db";
     const VACUUM_INTERVAL_SEC: f64 = 2.0;
@@ -268,48 +196,17 @@ mod tests {
     #[test]
     #[serial]
     fn connect_should_call_open() {
-        let mut db = connect_to_test_db(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC)
+        let db = connect_to_test_db(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC)
             .unwrap_or_else(|err| panic!("{}", err));
-
-        let tasks = db.tasks.take().expect("tasks");
-        assert!(tasks.len() > 0);
-
-        tasks.into_iter().for_each(|task| {
-            assert!(!task.is_finished());
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn open_should_start_all_tasks() {
-        let mut db = Ckydb::new(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC).unwrap();
-
-        if let Err(err) = db.open() {
-            panic!("error opening db: {}", err);
-        }
-
-        let tasks = db.tasks.take().expect("tasks");
-        assert!(tasks.len() > 0);
-        tasks.into_iter().for_each(|task| {
-            assert!(!task.is_finished());
-        });
+        assert!(db.is_open);
     }
 
     #[test]
     #[serial]
     fn close_should_stop_all_tasks() {
         let mut db = connect_to_test_db(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC).unwrap();
-
-        if let Err(err) = db.close() {
-            panic!("error closing db: {}", err);
-        }
-
-        match db.tasks.take() {
-            None => {}
-            Some(_) => {
-                panic!("there should be no tasks")
-            }
-        }
+        db.close().expect("closing db");
+        assert!(!db.is_open);
     }
 
     #[test]
@@ -501,44 +398,34 @@ mod tests {
     #[test]
     #[serial]
     fn vacuum_task_should_run_at_defined_interval() {
-        let key_to_delete = "salut";
         let mut db =
             connect_to_test_db(DB_PATH, MAX_FILE_SIZE_KB * 2.5, VACUUM_INTERVAL_SEC).unwrap();
 
         for (k, v) in &TEST_RECORDS {
-            if let Err(err) = db.set(*k, *v) {
-                panic!("error setting items: {}", err);
-            };
+            db.set(*k, *v).expect("set key");
         }
 
-        if let Err(err) = db.delete(key_to_delete) {
-            panic!("error deleting items: {}", err)
+        for i in 0..TEST_RECORDS.len() {
+            let (k, _) = TEST_RECORDS[i];
+            db.delete(k).expect("delete key");
+
+            let idx_file_contents_post_vacuum =
+                utils::read_files_with_extension(DB_PATH, "idx").unwrap();
+            let del_file_contents_post_vacuum =
+                utils::read_files_with_extension(DB_PATH, "del").unwrap();
+            let log_file_contents_post_vacuum =
+                utils::read_files_with_extension(DB_PATH, "log").unwrap();
+
+            if i != 5 {
+                assert!(!idx_file_contents_post_vacuum[0].contains(k));
+                assert!(del_file_contents_post_vacuum[0].contains(k));
+                assert!(log_file_contents_post_vacuum[0].contains(k));
+            } else {
+                assert!(!idx_file_contents_post_vacuum[0].contains(k));
+                assert!(!del_file_contents_post_vacuum[0].contains(k));
+                assert!(!log_file_contents_post_vacuum[0].contains(k));
+            }
         }
-
-        let idx_file_contents_pre_vacuum =
-            utils::read_files_with_extension(DB_PATH, "idx").unwrap();
-        let del_file_contents_pre_vacuum =
-            utils::read_files_with_extension(DB_PATH, "del").unwrap();
-        let log_file_contents_pre_vacuum =
-            utils::read_files_with_extension(DB_PATH, "log").unwrap();
-
-        sleep(Duration::from_secs_f64(VACUUM_INTERVAL_SEC * 2.0));
-
-        let idx_file_contents_post_vacuum =
-            utils::read_files_with_extension(DB_PATH, "idx").unwrap();
-        let del_file_contents_post_vacuum =
-            utils::read_files_with_extension(DB_PATH, "del").unwrap();
-        let log_file_contents_post_vacuum =
-            utils::read_files_with_extension(DB_PATH, "log").unwrap();
-
-        // before vacuum
-        assert!(!idx_file_contents_pre_vacuum[0].contains(key_to_delete));
-        assert!(del_file_contents_pre_vacuum[0].contains(key_to_delete));
-        assert!(log_file_contents_pre_vacuum[0].contains(key_to_delete));
-        // after vacuum
-        assert!(!idx_file_contents_post_vacuum[0].contains(key_to_delete));
-        assert!(!del_file_contents_post_vacuum[0].contains(key_to_delete));
-        assert!(!log_file_contents_post_vacuum[0].contains(key_to_delete));
     }
 
     #[test]
@@ -609,9 +496,4 @@ mod tests {
         // utils::add_dummy_file_data_in_db(db_path)?;
         connect(db_path, max_file_size_kb, vacuum_interval_sec)
     }
-}
-
-pub(crate) enum Signal {
-    Stop,
-    Continue,
 }

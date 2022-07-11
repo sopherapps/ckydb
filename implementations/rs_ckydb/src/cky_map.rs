@@ -46,8 +46,9 @@ impl CkyMap {
                     + KEY_VALUE_SEPARATOR_LENGTH
                     + value.len()
                     + TOKEN_SEPARATOR_LENGTH;
-                self.___replace_kv_string_section(start, end, "")?;
+                self.replace_kv_string_section(start, end, "")?;
                 self.offsets.remove(key);
+                self.shift_offsets(start, start as isize - end as isize);
                 return Ok(value);
             }
             return Err(CorruptedDataError {
@@ -89,7 +90,8 @@ impl CkyMap {
             if let Some(start) = self.offsets.get(key) {
                 let start = start.to_owned() + key.len() + KEY_VALUE_SEPARATOR_LENGTH;
                 let end = start + old_value.len();
-                self.___replace_kv_string_section(start, end, value)?;
+                self.replace_kv_string_section(start, end, value)?;
+                self.shift_offsets(end, value.len() as isize - old_value.len() as isize);
                 return Ok(Some(old_value));
             }
 
@@ -105,6 +107,12 @@ impl CkyMap {
         ));
 
         Ok(None)
+    }
+
+    /// Gets the number of items in CkyMap
+    #[inline(always)]
+    pub(crate) fn len(&self) -> usize {
+        self.inner_map.len()
     }
 
     /// Clears all data in this CkyMap
@@ -149,7 +157,7 @@ impl CkyMap {
     ///
     /// It throws a [crate::errors::Error::CorruptedDataError] if the range given is beyond the permissible
     #[inline]
-    fn ___replace_kv_string_section(
+    fn replace_kv_string_section(
         &mut self,
         start: usize,
         end: usize,
@@ -169,6 +177,24 @@ impl CkyMap {
         self.kv_string.replace_range(start..end, replacement);
 
         Ok(())
+    }
+
+    /// Shifts all offsets to the right of start (inclusive) by the given delta
+    pub fn shift_offsets(&mut self, start: usize, delta: isize) {
+        let mut new_values: HashMap<String, usize> = Default::default();
+        for (k, v) in &self.offsets {
+            let k = k.to_owned();
+            let v = v.to_owned();
+
+            if v >= start {
+                let new_value = (v as isize + delta) as usize;
+                new_values.insert(k, new_value);
+            }
+        }
+
+        for (k, v) in new_values {
+            let _ = &self.offsets.insert(k, v);
+        }
     }
 }
 
@@ -225,6 +251,13 @@ mod test {
         assert_eq!("", cky_map.to_string());
         assert_eq!(empty_str_map, cky_map.map());
         assert_eq!(empty_str_usize_map, cky_map.offsets);
+    }
+
+    #[test]
+    fn len_gets_number_of_items() {
+        let s = "1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&";
+        let cky_vector = CkyMap::from(s);
+        assert_eq!(cky_vector.len(), 5);
     }
 
     #[test]

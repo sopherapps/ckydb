@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DUMMY_FILE_DATA: [(&str, &str); 5] = [
     ("1655375120328185000.cky", "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&"),
-    ("1655375120328186000.cky", "1655375171402014000-bar><?&(^#foo$%#@*&^&"),
+    ("1655375120328186000.cky", "1655375171402013000-bar><?&(^#foo$%#@*&^&"),
     ("1655375171402014000.log", "1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&"),
-    ("delete.del", "1655403795838278-foo$%#@*&^&1655375171402014000-bar$%#@*&^&"),
+    ("delete.del", "1655403795838278-foo$%#@*&^&1655375171402013000-bar$%#@*&^&"),
     ("index.idx", "cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&pig><?&(^#1655404770534578-pig$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&"),
 ];
 
@@ -184,48 +184,6 @@ pub(crate) fn extract_tokens_from_str(content: &str) -> Vec<String> {
         .split(TOKEN_SEPARATOR)
         .map(String::from)
         .collect()
-}
-
-/// Deletes the key values corresponding to the keysToDelete
-/// if those items exist in that file
-///
-/// # Errors
-///
-/// See [fs::read_to_string] and [fs::write]
-pub(crate) fn delete_key_values_from_file<P: AsRef<Path>>(
-    path: P,
-    keys_to_delete: &Vec<String>,
-) -> io::Result<()> {
-    let keys_to_del_length = keys_to_delete.len();
-
-    let content = fs::read_to_string(&path)?;
-    let kv_pair_strings = extract_tokens_from_str(&content);
-    let mut prefixes_to_delete: Vec<String> = Vec::with_capacity(keys_to_del_length);
-
-    for i in 0..keys_to_del_length {
-        prefixes_to_delete.push(format!("{}{}", keys_to_delete[i], KEY_VALUE_SEPARATOR));
-    }
-
-    let new_content = kv_pair_strings
-        .into_iter()
-        .filter(|kv| !has_any_of_prefixes(kv, &prefixes_to_delete))
-        .fold("".to_string(), |accum, item| {
-            format!("{}{}{}", accum, item, TOKEN_SEPARATOR)
-        });
-
-    fs::write(path, new_content)
-}
-
-/// checks if the string phrase has any of the prefixes i.e. starts with any of those prefixes
-// #[inline]
-fn has_any_of_prefixes(phrase: &str, prefixes: &Vec<String>) -> bool {
-    for prefix in prefixes {
-        if phrase.starts_with(prefix) {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Returns the size of the file at the given `path` in kilobytes

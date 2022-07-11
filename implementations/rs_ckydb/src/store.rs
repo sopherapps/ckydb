@@ -4,11 +4,9 @@ use crate::cky_vector::CkyVector;
 use crate::constants::{DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, LOG_FILE_EXT};
 use crate::errors as ckydb;
 use crate::errors::Error::CorruptedDataError;
-use crate::sync::Lock;
 use crate::utils;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::{fs, io};
 
 /// `Store` trait represents the basic expectation for the internal store that accesses the file
@@ -84,7 +82,7 @@ pub(crate) trait Storage {
     /// is not accessible
     ///
     /// [io::Error]: std::io::Error
-    fn vacuum(&self) -> io::Result<()>;
+    fn vacuum(&mut self) -> io::Result<()>;
 }
 
 /// `Store` is the actual internal store that saves data both in memory and on disk
@@ -92,6 +90,7 @@ pub(crate) trait Storage {
 pub(crate) struct Store {
     db_path: PathBuf,
     max_file_size_kb: f64,
+    max_keys_marked_for_del: usize,
     cache: Cache,
     memtable: CkyMap,
     index: CkyMap,
@@ -101,8 +100,6 @@ pub(crate) struct Store {
     current_log_file_path: PathBuf,
     del_file_path: PathBuf,
     index_file_path: PathBuf,
-    cache_lock: Arc<Lock>,
-    del_file_lock: Arc<Lock>,
 }
 
 impl Storage for Store {
@@ -111,11 +108,11 @@ impl Storage for Store {
         self.create_index_file_if_not_exists()?;
         self.create_del_file_if_not_exists()?;
         self.create_log_file_if_not_exists()?;
-        self.vacuum()?;
         self.load_file_props_from_disk()?;
         self.load_index_from_disk()?;
         self.load_deleted_keys_from_disk()?;
-        self.load_memtable_from_disk()
+        self.vacuum_log_file(true)?;
+        self.vacuum()
     }
 
     fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
@@ -152,19 +149,14 @@ impl Storage for Store {
     }
 
     fn delete(&mut self, key: &str) -> ckydb::Result<()> {
-        let lock = Arc::clone(&self.del_file_lock);
-
-        if let Ok(_) = lock.lock() {
-            let timestamped_key = self.index.delete(key)?;
-            fs::write(&self.index_file_path, self.index.to_string())?;
-            self.deleted_keys.push(&timestamped_key);
-            fs::write(&self.del_file_path, self.deleted_keys.to_string())?;
-            return Ok(());
+        let timestamped_key = self.index.delete(key)?;
+        fs::write(&self.index_file_path, self.index.to_string())?;
+        self.deleted_keys.push(&timestamped_key);
+        fs::write(&self.del_file_path, self.deleted_keys.to_string())?;
+        if self.deleted_keys.len() > self.max_keys_marked_for_del {
+            self.vacuum()?;
         }
-
-        Err(CorruptedDataError {
-            data: Some("failed to obtain lock on delete file".to_string()),
-        })
+        return Ok(());
     }
 
     fn clear(&mut self) -> io::Result<()> {
@@ -173,14 +165,32 @@ impl Storage for Store {
         self.load()
     }
 
-    fn vacuum(&self) -> io::Result<()> {
-        let lock = Arc::clone(&self.del_file_lock);
-        let res = match lock.lock() {
-            Ok(_) => self.unlocked_vacuum(),
-            Err(e) => Err(io::Error::new(ErrorKind::Other, e.to_string())),
-        };
+    fn vacuum(&mut self) -> io::Result<()> {
+        let num_of_files = self.data_files.len();
 
-        res
+        for i in 0..num_of_files {
+            let current_file = &self.data_files[i];
+            let next_file = self
+                .data_files
+                .get(i + 1)
+                .unwrap_or_else(|| &self.current_log_file);
+
+            let keys_to_del = self.get_keys_to_delete_in_file(current_file, next_file);
+
+            if keys_to_del.len() > 0 {
+                let current = current_file.to_owned();
+                self.vacuum_data_file(&current, keys_to_del)?;
+            }
+        }
+
+        if self.deleted_keys.len() > 0 {
+            self.vacuum_log_file(false)?;
+        }
+
+        // Clear del file assuming all deleted keys were removed
+        fs::write(&self.del_file_path, self.deleted_keys.to_string())?;
+
+        Ok(())
     }
 }
 
@@ -200,10 +210,12 @@ impl Store {
         let db_path = PathBuf::from(Path::new(db_path));
         let del_file_path = db_path.join(DEL_FILENAME);
         let index_file_path = db_path.join(INDEX_FILENAME);
+        let max_keys_marked_for_del = 5;
 
         Store {
             db_path,
             max_file_size_kb,
+            max_keys_marked_for_del,
             cache: Cache::new_empty(),
             memtable: Default::default(),
             index: Default::default(),
@@ -213,37 +225,7 @@ impl Store {
             current_log_file_path: PathBuf::new(),
             del_file_path,
             index_file_path,
-            cache_lock: Arc::new(Lock::new(1)),
-            del_file_lock: Arc::new(Lock::new(1)),
         }
-    }
-
-    /// This does the actual vacuuming of removing items that have benn marked for deletion
-    /// However, it does not employ any lock on the files. As such, calling it directly without
-    /// securing the del_file_lock might cause data races
-    ///
-    /// # Errors
-    ///
-    /// See [Store::get_keys_to_delete], [crate::utils::get_files_with_extensions],
-    /// [crate::utils::delete_key_values_from_file] and [std::fs::write]
-    fn unlocked_vacuum(&self) -> io::Result<()> {
-        let keys_to_delete = self.get_keys_to_delete()?;
-        if keys_to_delete.len() == 0 {
-            return Ok(());
-        }
-
-        let files_to_vacuum =
-            utils::get_files_with_extensions(&self.db_path, vec![LOG_FILE_EXT, DATA_FILE_EXT])?;
-
-        for filename in files_to_vacuum {
-            let path = self.db_path.join(filename);
-            utils::delete_key_values_from_file(&path, &keys_to_delete)?;
-        }
-
-        // Clear del file
-        fs::write(&self.del_file_path, "")?;
-
-        Ok(())
     }
 
     /// Creates a new index file if there is no index file in the database folder
@@ -369,17 +351,6 @@ impl Store {
         Ok(())
     }
 
-    /// Reads the del file and gets the items to be deleted
-    ///
-    /// # Errors
-    ///
-    /// See [fs::read_to_string]
-    #[inline(always)]
-    fn get_keys_to_delete(&self) -> io::Result<Vec<String>> {
-        let content = fs::read_to_string(&self.del_file_path)?;
-        Ok(utils::extract_tokens_from_str(&content))
-    }
-
     /// Gets the timestamped key corresponding to the given key in the index
     /// If there is none, it creates a new timestamped key and adds it to the index file
     /// It returns a tuple of the key and a boolean of whether the key is new or not
@@ -433,16 +404,11 @@ impl Store {
             return self.save_key_value_pair_to_memtable(&timestamped_key, &value);
         }
 
-        let lock = Arc::clone(&self.cache_lock);
-        if let Ok(_) = lock.lock() {
-            if !self.cache.is_in_range(&timestamped_key) {
-                self.load_cache_containing_key(&timestamped_key)?;
-            }
-
-            return self.save_key_value_pair_to_cache(&timestamped_key, &value);
+        if !self.cache.is_in_range(&timestamped_key) {
+            self.load_cache_containing_key(&timestamped_key)?;
         }
 
-        Err(CorruptedDataError { data: None })
+        return self.save_key_value_pair_to_cache(&timestamped_key, &value);
     }
 
     /// Deletes the given key and its value from
@@ -603,21 +569,13 @@ impl Store {
             return Ok(value);
         }
 
-        let lock = Arc::clone(&self.cache_lock);
-
-        if let Ok(_) = lock.lock() {
-            if !self.cache.is_in_range(timestamped_key) {
-                self.load_cache_containing_key(timestamped_key)?;
-            }
-
-            let value = self.cache.get(timestamped_key)?;
-
-            return Ok(value);
+        if !self.cache.is_in_range(timestamped_key) {
+            self.load_cache_containing_key(timestamped_key)?;
         }
 
-        Err(CorruptedDataError {
-            data: Some("failed to get lock to cache".to_string()),
-        })
+        let value = self.cache.get(timestamped_key)?;
+
+        return Ok(value);
     }
 
     /// Deletes all files in the database folder
@@ -628,6 +586,83 @@ impl Store {
     #[inline(always)]
     fn clear_disk(&self) -> io::Result<()> {
         fs::remove_dir_all(&self.db_path)
+    }
+
+    /// Deletes given keys from a given data file (without extension)
+    /// and removes them from the list of keys marked for deletion
+    ///
+    /// # Errors
+    ///
+    /// See [fs::read_to_string], [fs::write] and [crate::cky_map::CkyMap::delete]
+    fn vacuum_data_file(&mut self, data_file: &str, keys: Vec<(usize, String)>) -> io::Result<()> {
+        let path = self
+            .db_path
+            .join(format!("{}.{}", data_file, DATA_FILE_EXT));
+        let content = fs::read_to_string(&path)?;
+        let mut map = CkyMap::from(content);
+
+        for (i, k) in &keys {
+            let i = i.to_owned();
+            map.delete(k)
+                .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
+            self.deleted_keys
+                .remove(i)
+                .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
+        }
+
+        fs::write(&path, map.to_string())
+    }
+
+    /// Deletes any keys marked for deletion from the log file. It gets the data from
+    /// memtable. The force_reload when true forces memtable to be reloaded from disk
+    ///
+    /// # Errors
+    ///
+    /// See [Store::load_memtable_from_disk], [fs::write] and [crate::cky_map::CkyMap::delete],
+    /// [crate::cky_vector::CkyVector::remove]
+    fn vacuum_log_file(&mut self, force_reload: bool) -> io::Result<()> {
+        if force_reload {
+            self.load_memtable_from_disk()?;
+        }
+
+        let mut indices_to_del: Vec<usize> = vec![];
+
+        for i in 0..self.deleted_keys.len() {
+            let key = self.deleted_keys.get(i).unwrap();
+            if let Ok(_) = self.memtable.delete(key) {
+                indices_to_del.push(i);
+            }
+        }
+
+        self.deleted_keys
+            .remove_many(indices_to_del)
+            .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
+
+        fs::write(&self.current_log_file_path, self.memtable.to_string())
+    }
+
+    /// Returns the keys to delete within the given `current_file`
+    /// and their indices within the deleted_keys instance prop
+    ///
+    /// # Errors
+    ///
+    /// See [crate::cky_vector::CkyVector::remove]
+    fn get_keys_to_delete_in_file(
+        &self,
+        current_file: &String,
+        next_file: &String,
+    ) -> Vec<(usize, String)> {
+        let num_of_deleted_keys = self.deleted_keys.len();
+        let mut keys: Vec<(usize, String)> = Vec::with_capacity(num_of_deleted_keys);
+
+        for j in 0..num_of_deleted_keys {
+            let k = self.deleted_keys.get(j).unwrap();
+            if current_file <= k && next_file > k {
+                keys.push((j, k.to_owned()));
+            }
+        }
+
+        keys
     }
 }
 
@@ -901,7 +936,7 @@ mod test {
     fn delete_key_removes_key_from_index_and_adds_it_to_del_file() {
         let key = "pig";
         let expected_index = CkyMap::from("cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&");
-        let expected_keys_marked_for_delete = vec!["1655404770534578-pig"];
+        let expected_key_marked_for_delete = "1655404770534578-pig".to_owned();
         let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
         let db_path = Path::new(DB_PATH);
         let index_file_path = db_path.join(INDEX_FILENAME);
@@ -917,6 +952,7 @@ mod test {
         let map_from_idx_file = utils::extract_key_values_from_str(&idx_file_content)
             .expect("extract key values from index");
         let list_from_del_file = utils::extract_tokens_from_str(&del_file_content);
+        let last_item_in_del_file = list_from_del_file.last().unwrap().to_owned();
 
         match store.get(key) {
             Ok(_) => panic!("error was expected"),
@@ -924,7 +960,7 @@ mod test {
         }
 
         assert_eq!(expected_index.map(), map_from_idx_file);
-        assert_eq!(expected_keys_marked_for_delete, list_from_del_file);
+        assert_eq!(last_item_in_del_file, expected_key_marked_for_delete);
         assert_eq!(expected_index.to_string(), store.index.to_string());
     }
 
@@ -991,19 +1027,12 @@ mod test {
         let data_file_paths = DATA_FILES.map(|f| db_path.join(f));
         let log_file_path = db_path.join(LOG_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
-        let store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
 
-        if let Err(err) = utils::clear_dummy_file_data_in_db(DB_PATH) {
-            panic!("error clearing dummy data: {}", err);
-        }
-
-        if let Err(err) = utils::add_dummy_file_data_in_db(DB_PATH) {
-            panic!("error adding dummy data: {}", err);
-        }
-
-        if let Err(err) = store.vacuum() {
-            panic!("error vacuuming: {}", err);
-        }
+        utils::clear_dummy_file_data_in_db(DB_PATH).expect("clearing dummy data");
+        utils::add_dummy_file_data_in_db(DB_PATH).expect("add dummy data");
+        store.load().expect("load store");
+        store.vacuum().expect("vacuum");
 
         let data_file_content =
             data_file_paths.map(|path| fs::read_to_string(path).expect("read data file"));
@@ -1020,14 +1049,14 @@ mod test {
     fn vacuum_does_nothing_if_del_file_is_empty() {
         let expected_log_file_content = String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&");
         let expected_data_contents = vec![
-            "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&".to_string(), "1655375171402014000-bar><?&(^#foo$%#@*&^&".to_string(),
+            "1655375120328185000-cow><?&(^#500 months$%#@*&^&1655375120328185100-dog><?&(^#23 months$%#@*&^&".to_string(), "1655375171402013000-bar><?&(^#foo$%#@*&^&".to_string(),
         ];
         let expected_del_file_content = "".to_string();
         let db_path = Path::new(DB_PATH);
         let data_file_paths = DATA_FILES.map(|f| db_path.join(f));
         let log_file_path = db_path.join(LOG_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
-        let store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
+        let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
 
         if let Err(err) = utils::clear_dummy_file_data_in_db(DB_PATH) {
             panic!("error clearing dummy data: {}", err);
