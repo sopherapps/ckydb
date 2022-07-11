@@ -248,7 +248,13 @@ weird errors. However, the escaping is expensive and it is thus turned off by de
 
 ## Ideas For Improvement
 
-- [ ] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
+- [ ] Inline many utils
+- [ ] Remove eagerly evaluated result handlers (i.e. use '.or_else' instead of 'or')
+- [ ] Remove unnecessary cloning
+- [ ] Reuse Cache, CkyVector and CkyMap instances instead of reassigning them when resetting them.
+- [ ] Fix vacuum to use CkyVector
+- [ ] Use &str as args where possible; and remove any of their cloning
+- [x] Explicitly allow for multiple concurrent reads (e.g. don't lock at all on read)
 - [ ] Explicitly allow for conditional multiple concurrent writes (e.g. lock on key, not on store)
 - [ ] Distribute the database across different machines or nodes (
   e.g. have multiple backend nodes, and let each node's timestamped key range be recorded on the master/main/gateway

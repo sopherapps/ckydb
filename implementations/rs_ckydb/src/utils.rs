@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::ErrorKind::AlreadyExists;
-use std::io::{self, ErrorKind, ErrorKind::NotFound, Write};
+use std::io::{self, ErrorKind, ErrorKind::NotFound};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -131,23 +131,12 @@ pub(crate) fn create_file_if_not_exist<P: AsRef<Path>>(path: P) -> io::Result<()
         })
 }
 
-/// Appends the supplied content to the file
-///
-/// # Errors
-///
-/// See [fs::OpenOptions::open] and [std::io::Write::write_all]
-// #[inline]
-pub(crate) fn append_to_file<P: AsRef<Path>>(path: P, content: &str) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).append(true).open(path)?;
-    file.write_all(content.as_bytes())
-}
-
 /// Returns the current timestamp as a string.
 ///
 /// # Errors
 ///
 /// See [std::time::SystemTime::duration_since]
-// #[inline]
+#[inline(always)]
 pub(crate) fn get_current_timestamp_str() -> io::Result<String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

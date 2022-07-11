@@ -42,7 +42,7 @@ pub(crate) struct Cache {
 
 impl Cache {
     /// Initializes a new Cache with the given `data`, and bounds (`start`, `end`)
-    // #[inline]
+    #[inline(always)]
     pub(crate) fn new(content: String, start: String, end: String) -> Cache {
         Cache {
             data: CkyMap::from(content),
@@ -52,13 +52,20 @@ impl Cache {
     }
 
     /// Initializes a new empty Cache with start: "0", end: "0" and data as empty Hashmap
-    // #[inline]
+    #[inline(always)]
     pub(crate) fn new_empty() -> Cache {
         Cache {
             data: Default::default(),
             start: "0".to_string(),
             end: "0".to_string(),
         }
+    }
+
+    /// Reloads the cache with the given data
+    pub(crate) fn reload(&mut self, content: String, start: String, end: String) {
+        self.data.reload_from_str(content);
+        self.start = start;
+        self.end = end;
     }
 }
 

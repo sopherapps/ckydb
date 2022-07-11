@@ -7,12 +7,13 @@ use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct CkyMap {
-    kv_string: String,
+    pub(crate) kv_string: String,
     offsets: HashMap<String, usize>,
-    inner_map: HashMap<String, String>,
+    pub(crate) inner_map: HashMap<String, String>,
 }
 
 impl Default for CkyMap {
+    #[inline(always)]
     fn default() -> Self {
         CkyMap {
             kv_string: "".to_owned(),
@@ -24,6 +25,7 @@ impl Default for CkyMap {
 
 impl CkyMap {
     /// Returns a map of the key, values that are found in this CkyMap
+    #[inline(always)]
     pub(crate) fn map(&self) -> HashMap<String, String> {
         self.inner_map.to_owned()
     }
@@ -65,6 +67,7 @@ impl CkyMap {
     /// - Returns a [crate::errors::Error::CorruptedDataError] if the inner string is out of sync with
     /// the offsets
     /// - Returns a [crate::errors::Error::NotFoundError] when the key does not exist
+    #[inline(always)]
     pub(crate) fn get(&self, key: &str) -> ckydb::Result<String> {
         self.inner_map
             .get(key)
@@ -104,6 +107,42 @@ impl CkyMap {
         Ok(None)
     }
 
+    /// Clears all data in this CkyMap
+    pub(crate) fn clear(&mut self) {
+        self.inner_map.clear();
+        self.offsets.clear();
+        self.kv_string.clear();
+    }
+
+    /// Reloads its internal structure to match the given string
+    pub(crate) fn reload_from_str(&mut self, content: String) {
+        self.offsets.clear();
+        self.inner_map.clear();
+        self.kv_string = content;
+        let trimmed = self.kv_string.trim_end_matches(TOKEN_SEPARATOR);
+        if trimmed == "" {
+            return;
+        }
+
+        let s_start = trimmed.as_ptr() as isize;
+
+        for kv_pair_str in trimmed.split(TOKEN_SEPARATOR) {
+            let pair: Vec<&str> = kv_pair_str.split(KEY_VALUE_SEPARATOR).collect();
+
+            let (key, value, offset) = match pair.len() {
+                2 => {
+                    let (key, value) = (pair[0], pair[1]);
+                    let start = (key.as_ptr() as isize - s_start) as usize;
+                    (key.to_owned(), value.to_owned(), start)
+                }
+                _ => continue,
+            };
+
+            self.offsets.insert(key.clone(), offset);
+            self.inner_map.insert(key, value);
+        }
+    }
+
     /// Replaces the section of the kv_string under the hood with the given replacement
     ///
     /// # Errors
@@ -135,52 +174,28 @@ impl CkyMap {
 
 impl From<String> for CkyMap {
     fn from(s: String) -> Self {
-        let mut cky_map = CkyMap {
-            kv_string: s,
-            offsets: Default::default(),
-            inner_map: Default::default(),
-        };
-
-        let trimmed = cky_map.kv_string.trim_end_matches(TOKEN_SEPARATOR);
-        if trimmed == "" {
-            return cky_map;
-        }
-
-        let s_start = trimmed.as_ptr() as isize;
-
-        for kv_pair_str in trimmed.split(TOKEN_SEPARATOR) {
-            let pair: Vec<&str> = kv_pair_str.split(KEY_VALUE_SEPARATOR).collect();
-
-            let (key, value, offset) = match pair.len() {
-                2 => {
-                    let (key, value) = (pair[0], pair[1]);
-                    let start = (key.as_ptr() as isize - s_start) as usize;
-                    (key.to_owned(), value.to_owned(), start)
-                }
-                _ => continue,
-            };
-
-            cky_map.offsets.insert(key.clone(), offset);
-            cky_map.inner_map.insert(key, value);
-        }
-
+        let mut cky_map = CkyMap::default();
+        cky_map.reload_from_str(s);
         cky_map
     }
 }
 
 impl From<&str> for CkyMap {
+    #[inline(always)]
     fn from(s: &str) -> Self {
         CkyMap::from(s.to_owned())
     }
 }
 
 impl From<&String> for CkyMap {
+    #[inline(always)]
     fn from(s: &String) -> Self {
         CkyMap::from(s.to_owned())
     }
 }
 
 impl ToString for CkyMap {
+    #[inline(always)]
     fn to_string(&self) -> String {
         return self.kv_string.to_string();
     }
@@ -196,6 +211,46 @@ mod test {
         let s = String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&");
         let cky_map = CkyMap::from(&s);
         assert_eq!(s, cky_map.to_string());
+    }
+
+    #[test]
+    fn clear_removes_all_data() {
+        let s = String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&");
+        let mut cky_map = CkyMap::from(&s);
+        let empty_str_map: HashMap<String, String> = Default::default();
+        let empty_str_usize_map: HashMap<String, usize> = Default::default();
+
+        cky_map.clear();
+
+        assert_eq!("", cky_map.to_string());
+        assert_eq!(empty_str_map, cky_map.map());
+        assert_eq!(empty_str_usize_map, cky_map.offsets);
+    }
+
+    #[test]
+    fn reload_from_str_matches_internal_state_to_str() {
+        let s = String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&1655403795838278-foo><?&(^#890 months$%#@*&^&");
+        let new_string = "goat><?&(^#big$%#@*&^&hen><?&(^#ben$%#@*&^&pig><?&(^#bar$%#@*&^&fish><?&(^#bear$%#@*&^&".to_string();
+        let expected_map = HashMap::from(
+            [
+                ("goat", "big"),
+                ("hen", "ben"),
+                ("pig", "bar"),
+                ("fish", "bear"),
+            ]
+            .map(|(k, v)| (k.to_owned(), v.to_owned())),
+        );
+        let mut cky_map = CkyMap::from(&s);
+        cky_map.reload_from_str(new_string.clone());
+        let kv: HashMap<String, String> = expected_map
+            .clone()
+            .into_iter()
+            .map(|(k, _)| (k.clone(), cky_map.get(&k).unwrap()))
+            .collect();
+
+        assert_eq!(new_string, cky_map.to_string());
+        assert_eq!(expected_map, cky_map.map());
+        assert_eq!(expected_map, kv);
     }
 
     #[test]

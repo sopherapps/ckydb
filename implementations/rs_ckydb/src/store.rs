@@ -1,9 +1,7 @@
 use crate::cache::{Cache, Caching};
 use crate::cky_map::CkyMap;
 use crate::cky_vector::CkyVector;
-use crate::constants::{
-    DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, LOG_FILE_EXT, TOKEN_SEPARATOR,
-};
+use crate::constants::{DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, LOG_FILE_EXT};
 use crate::errors as ckydb;
 use crate::errors::Error::CorruptedDataError;
 use crate::sync::Lock;
@@ -141,16 +139,12 @@ impl Storage for Store {
             return Err(err);
         }
 
-        if is_new_key {
-            self.index.insert(key, &timestamped_key)?;
-        }
-
         Ok(())
     }
 
     fn get(&mut self, key: &str) -> ckydb::Result<String> {
         let timestamped_key = self.index.get(key)?;
-        self.get_value_for_key(timestamped_key).or_else(|err| {
+        self.get_value_for_key(&timestamped_key).or_else(|err| {
             Err(CorruptedDataError {
                 data: Some(format!("error getting value: {}", err)),
             })
@@ -161,7 +155,6 @@ impl Storage for Store {
         let lock = Arc::clone(&self.del_file_lock);
 
         if let Ok(_) = lock.lock() {
-            // Fixme: deleting from index should be last step
             let timestamped_key = self.index.delete(key)?;
             fs::write(&self.index_file_path, self.index.to_string())?;
             self.deleted_keys.push(&timestamped_key);
@@ -175,7 +168,7 @@ impl Storage for Store {
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.index = Default::default();
+        self.index.clear();
         self.clear_disk()?;
         self.load()
     }
@@ -234,14 +227,13 @@ impl Store {
     /// See [Store::get_keys_to_delete], [crate::utils::get_files_with_extensions],
     /// [crate::utils::delete_key_values_from_file] and [std::fs::write]
     fn unlocked_vacuum(&self) -> io::Result<()> {
-        let file_exts_to_vacuum = vec![LOG_FILE_EXT, DATA_FILE_EXT];
         let keys_to_delete = self.get_keys_to_delete()?;
-
         if keys_to_delete.len() == 0 {
             return Ok(());
         }
 
-        let files_to_vacuum = utils::get_files_with_extensions(&self.db_path, file_exts_to_vacuum)?;
+        let files_to_vacuum =
+            utils::get_files_with_extensions(&self.db_path, vec![LOG_FILE_EXT, DATA_FILE_EXT])?;
 
         for filename in files_to_vacuum {
             let path = self.db_path.join(filename);
@@ -259,7 +251,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist]
-    // #[inline]
+    #[inline(always)]
     fn create_index_file_if_not_exists(&self) -> io::Result<()> {
         utils::create_file_if_not_exist(&self.index_file_path)
     }
@@ -269,7 +261,7 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist]
-    // #[inline]
+    #[inline(always)]
     fn create_del_file_if_not_exists(&self) -> io::Result<()> {
         utils::create_file_if_not_exist(&self.del_file_path)
     }
@@ -279,10 +271,9 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::create_file_if_not_exist] and [Store::create_new_log_file]
-    // #[inline]
+    #[inline(always)]
     fn create_log_file_if_not_exists(&mut self) -> io::Result<()> {
-        let extensions = vec![LOG_FILE_EXT];
-        let log_files = utils::get_files_with_extensions(&self.db_path, extensions)?;
+        let log_files = utils::get_files_with_extensions(&self.db_path, vec![LOG_FILE_EXT])?;
 
         if log_files.len() > 0 {
             self.current_log_file_path = self.db_path.join(&log_files[0]);
@@ -312,9 +303,9 @@ impl Store {
             let filename: &str = parts[1];
 
             if ext == LOG_FILE_EXT {
-                self.current_log_file = filename.to_string()
+                self.current_log_file = filename.to_owned()
             } else if ext == DATA_FILE_EXT {
-                self.data_files.push(filename.to_string())
+                self.data_files.push(filename.to_owned())
             }
         }
 
@@ -328,7 +319,7 @@ impl Store {
     /// # Error
     ///
     /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
-    // #[inline]
+    #[inline(always)]
     fn load_index_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.index_file_path)?;
         self.index = CkyMap::from(content);
@@ -340,7 +331,7 @@ impl Store {
     /// # Error
     ///
     /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
-    // #[inline]
+    #[inline(always)]
     fn load_deleted_keys_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.del_file_path)?;
         self.deleted_keys = CkyVector::from(content);
@@ -352,7 +343,7 @@ impl Store {
     /// # Error
     ///
     /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
-    // #[inline]
+    #[inline(always)]
     fn load_memtable_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.current_log_file_path)?;
         self.memtable = CkyMap::from(content);
@@ -383,7 +374,7 @@ impl Store {
     /// # Errors
     ///
     /// See [fs::read_to_string]
-    // #[inline]
+    #[inline(always)]
     fn get_keys_to_delete(&self) -> io::Result<Vec<String>> {
         let content = fs::read_to_string(&self.del_file_path)?;
         Ok(utils::extract_tokens_from_str(&content))
@@ -399,21 +390,19 @@ impl Store {
     /// or adding it to the index file
     ///
     /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
-    fn get_timestamped_key(&mut self, key: &str) -> io::Result<(String, bool)> {
-        if let Ok(k) = self.index.get(key) {
-            return Ok((k, false));
+    #[inline]
+    fn get_timestamped_key(&mut self, key: &str) -> ckydb::Result<(String, bool)> {
+        match self.index.get(key) {
+            Ok(k) => Ok((k, false)),
+            Err(_) => {
+                let timestamp = utils::get_current_timestamp_str()?;
+                let timestamped_key = format!("{}-{}", timestamp, key);
+                self.index.insert(key, &timestamped_key)?;
+                fs::write(&self.index_file_path, self.index.to_string())?;
+
+                Ok((timestamped_key, true))
+            }
         }
-
-        let timestamp = utils::get_current_timestamp_str()?;
-        let timestamped_key = format!("{}-{}", timestamp, key);
-        let new_file_entry = format!(
-            "{}{}{}{}",
-            key, KEY_VALUE_SEPARATOR, timestamped_key, TOKEN_SEPARATOR
-        );
-
-        utils::append_to_file(&self.index_file_path, &new_file_entry)?;
-
-        Ok((timestamped_key, true))
     }
 
     /// Removes the key and timestamped key from the index
@@ -422,20 +411,17 @@ impl Store {
     /// # Errors
     ///
     /// See [utils::delete_key_values_from_file]
-    // #[inline]
+    #[inline(always)]
     fn remove_timestamped_key_for_key_if_exists(&mut self, key: &str) -> io::Result<()> {
-        if let Ok(_) = self.index.get(key) {
-            return match self.index.delete(key) {
-                Ok(_) => fs::write(&self.index_file_path, self.index.to_string()),
-                Err(e) => Err(io::Error::new(ErrorKind::Other, e)),
-            };
-        };
-
-        Ok(())
+        match self.index.delete(key) {
+            Ok(_) => fs::write(&self.index_file_path, self.index.to_string()),
+            Err(e) => Err(io::Error::new(ErrorKind::Other, e)),
+        }
     }
 
     /// Saves the key value pair in memtable and log file if it is newer than log file
     /// or in cache and in the corresponding dataFile if the key is old
+    /// If error occurs, it returns the error with the old value if any or None
     ///
     /// # Error
     ///
@@ -443,40 +429,20 @@ impl Store {
     ///
     /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
     fn save_key_value_pair(&mut self, timestamped_key: &str, value: &str) -> ckydb::Result<()> {
-        let timestamped_key = timestamped_key.to_owned();
-        let value = value.to_owned();
-
-        if timestamped_key >= self.current_log_file {
-            // FIXME: This to_string and map should not be done everytime even when there is no error
-            let old_value = match self.memtable.get(&timestamped_key) {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            };
-
-            return self
-                .save_key_value_pair_to_memtable(&timestamped_key, &value)
-                .or(Err(CorruptedDataError { data: old_value }));
+        if timestamped_key >= &self.current_log_file[..] {
+            return self.save_key_value_pair_to_memtable(&timestamped_key, &value);
         }
 
         let lock = Arc::clone(&self.cache_lock);
         if let Ok(_) = lock.lock() {
             if !self.cache.is_in_range(&timestamped_key) {
-                self.load_cache_containing_key(&timestamped_key)
-                    .or(Err(CorruptedDataError { data: None }))?;
+                self.load_cache_containing_key(&timestamped_key)?;
             }
 
-            let old_value = self.cache.data.get(&timestamped_key)?;
-            let old_value = old_value.to_owned();
-            return self
-                .save_key_value_pair_to_cache(&timestamped_key, &value)
-                .or(Err(CorruptedDataError {
-                    data: Some(old_value),
-                }));
+            return self.save_key_value_pair_to_cache(&timestamped_key, &value);
         }
 
-        Err(CorruptedDataError {
-            data: Some("failed to get lock on cache".to_string()),
-        })
+        Err(CorruptedDataError { data: None })
     }
 
     /// Deletes the given key and its value from
@@ -485,23 +451,17 @@ impl Store {
     /// # Errors
     ///
     /// See [Store::persist_cache_to_disk] and [utils::persist_map_data_to_file]
-    // #[inline]
     fn delete_key_value_pair_if_exists(&mut self, key: &str) -> ckydb::Result<()> {
         if self.cache.is_in_range(key) {
             self.cache.remove(key)?;
-            return match self.persist_cache_to_disk() {
-                Err(err) => Err(ckydb::Error::from(err)),
-                Ok(_) => Ok(()),
-            };
+            self.persist_cache_to_disk()?;
+            return Ok(());
         }
 
         if key >= &self.current_log_file[..] {
             self.memtable.delete(key)?;
-            let result = fs::write(&self.current_log_file_path, self.memtable.to_string());
-            return match result {
-                Err(err) => Err(ckydb::Error::from(err)),
-                Ok(_) => Ok(()),
-            };
+            fs::write(&self.current_log_file_path, self.memtable.to_string())?;
+            return Ok(());
         }
 
         Ok(())
@@ -509,21 +469,22 @@ impl Store {
 
     /// Saves the key value pair to memtable and persists memtable
     /// to current log file
+    /// It returns the Option of the old value in the error if error occurs
     ///
     /// # Errors
     ///
-    /// See [crate::utils::persist_map_data_to_file] and [Store::roll_log_file_if_too_big]
-    // #[inline]
+    /// See [fs::write] and [crate::CkyMap::insert]
+    #[inline(always)]
     fn save_key_value_pair_to_memtable(
         &mut self,
         timestamped_key: &str,
         value: &str,
-    ) -> io::Result<()> {
-        self.memtable
-            .insert(timestamped_key, value)
-            .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
-        fs::write(&self.current_log_file_path, self.memtable.to_string())?;
+    ) -> ckydb::Result<()> {
+        let data = self.memtable.insert(timestamped_key, value)?;
+        fs::write(&self.current_log_file_path, self.memtable.to_string())
+            .or_else(|_| Err(CorruptedDataError { data: data.clone() }))?;
         self.roll_log_file_if_too_big()
+            .or_else(|_| Err(CorruptedDataError { data }))
     }
 
     /// Saves the key value pair to cache and persists cache
@@ -532,16 +493,15 @@ impl Store {
     /// # Errors
     ///
     /// See [Store::persist_cache_to_disk]
-    // #[inline]
+    #[inline(always)]
     fn save_key_value_pair_to_cache(
         &mut self,
         timestamped_key: &str,
         value: &str,
-    ) -> io::Result<()> {
-        self.cache
-            .update(timestamped_key, value)
-            .or_else(|e| Err(io::Error::new(ErrorKind::Other, e)))?;
+    ) -> ckydb::Result<()> {
+        let data = self.cache.update(timestamped_key, value)?;
         self.persist_cache_to_disk()
+            .or_else(|_| Err(CorruptedDataError { data }))
     }
 
     /// Loads the cache with data containing the timestampedKey
@@ -552,16 +512,16 @@ impl Store {
     /// an of the ranges of timestamps represented by the data file names and the log file name.
     /// Other errors may occur as seen in
     /// [std::fs::read_to_string] and [utils::extract_key_values_from_str]
-    // #[inline]
-    fn load_cache_containing_key(&mut self, key: &str) -> io::Result<()> {
+    #[inline(always)]
+    fn load_cache_containing_key(&mut self, key: &str) -> ckydb::Result<()> {
         let (start, end) = self
             .get_timestamp_range_for_key(key)
-            .ok_or(io::Error::new(io::ErrorKind::InvalidData, key.to_string()))?;
+            .ok_or_else(|| CorruptedDataError { data: None })?;
         // get data from disk
         let file_path = self.db_path.join(format!("{}.{}", start, DATA_FILE_EXT));
         let content_str = fs::read_to_string(&file_path)?;
 
-        self.cache = Cache::new(content_str, start, end);
+        self.cache.reload(content_str, start, end);
         Ok(())
     }
 
@@ -580,7 +540,7 @@ impl Store {
                 self.db_path.join(&new_data_filename),
             )?;
 
-            self.memtable = Default::default();
+            self.memtable.clear();
             self.data_files.push(self.current_log_file.clone());
             // endure the data files are sorted
             self.data_files.sort();
@@ -595,7 +555,7 @@ impl Store {
     /// # Errors
     ///
     /// See [crate::utils::persist_map_data_to_file]
-    // #[inline]
+    #[inline(always)]
     fn persist_cache_to_disk(&self) -> io::Result<()> {
         let data_file_path = self
             .db_path
@@ -607,17 +567,22 @@ impl Store {
     /// the key lies. The timestamps are got from the names of the data files and the current log file
     /// It will return None if there is no relevant timestamp range from the available data file names
     /// and log file names
-    // #[inline]
     fn get_timestamp_range_for_key(&self, key: &str) -> Option<(String, String)> {
-        let mut timestamps = self.data_files.clone();
-        timestamps.push(self.current_log_file.clone());
-        let key_as_string = key.to_string();
+        let num_of_data_files = self.data_files.len();
 
-        for i in 1..timestamps.len() {
-            let current = &timestamps[i];
-            if *current > key_as_string {
-                return Some((timestamps[i - 1].clone(), current.clone()));
+        for i in 1..num_of_data_files {
+            let current = &self.data_files[i][..];
+            if current > key {
+                return Some(((&self.data_files[i - 1]).to_owned(), current.to_owned()));
             }
+        }
+
+        if &self.current_log_file[..] > key {
+            let last_data_file = &self.data_files[num_of_data_files - 1];
+            return Some((
+                last_data_file.to_owned(),
+                (&self.current_log_file).to_owned(),
+            ));
         }
 
         None
@@ -632,21 +597,20 @@ impl Store {
     /// don't contain the key yet they should contain it.
     ///
     /// Obviously [crate::errors::CorruptedDataError] has a very minute chance of happening
-    // #[inline]
-    fn get_value_for_key(&mut self, timestamped_key: String) -> ckydb::Result<String> {
-        if timestamped_key >= self.current_log_file {
-            let value = self.memtable.get(&timestamped_key)?;
-            return Ok(value.to_string());
+    fn get_value_for_key(&mut self, timestamped_key: &str) -> ckydb::Result<String> {
+        if timestamped_key >= &self.current_log_file[..] {
+            let value = self.memtable.get(timestamped_key)?;
+            return Ok(value);
         }
 
         let lock = Arc::clone(&self.cache_lock);
 
         if let Ok(_) = lock.lock() {
-            if !self.cache.is_in_range(&timestamped_key) {
-                self.load_cache_containing_key(&timestamped_key)?;
+            if !self.cache.is_in_range(timestamped_key) {
+                self.load_cache_containing_key(timestamped_key)?;
             }
 
-            let value = self.cache.get(&timestamped_key)?;
+            let value = self.cache.get(timestamped_key)?;
 
             return Ok(value);
         }
@@ -661,7 +625,7 @@ impl Store {
     /// # Errors
     ///
     /// See [fs::remove_dir_all]
-    // #[inline]
+    #[inline(always)]
     fn clear_disk(&self) -> io::Result<()> {
         fs::remove_dir_all(&self.db_path)
     }

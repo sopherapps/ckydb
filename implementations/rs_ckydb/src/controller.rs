@@ -199,11 +199,11 @@ impl Controller for Ckydb {
             .expect("set store")
     }
 
-    fn get<'a>(&'a mut self, key: &'a str) -> ckydb::Result<String> {
+    fn get(&mut self, key: &str) -> ckydb::Result<String> {
         self.store.get(key)
     }
 
-    fn delete<'a>(&'a mut self, key: &'a str) -> ckydb::Result<()> {
+    fn delete(&mut self, key: &str) -> ckydb::Result<()> {
         self.mut_lock
             .lock()
             .and_then(|_| Ok(self.store.delete(key)))
