@@ -1,6 +1,5 @@
 use crate::errors as ckydb;
 use crate::store::{Storage, Store};
-use crate::sync::Lock;
 use std::io;
 
 /// `Controller` trait represents the basic expectation for the public API for the database
@@ -79,7 +78,6 @@ pub trait Controller {
 /// It implements the [Controller] trait as well as the [Drop] trait
 pub struct Ckydb {
     store: Store,
-    mut_lock: Lock,
     is_open: bool,
 }
 
@@ -97,7 +95,6 @@ impl Ckydb {
         store.load().and(Ok(Ckydb {
             store,
             is_open: false,
-            mut_lock: Lock::new(1),
         }))
     }
 }
@@ -123,10 +120,7 @@ impl Controller for Ckydb {
     }
 
     fn set(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
-        self.mut_lock
-            .lock()
-            .and_then(|_| Ok(self.store.set(key, value)))
-            .expect("set store")
+        self.store.set(key, value)
     }
 
     fn get(&mut self, key: &str) -> ckydb::Result<String> {
@@ -134,17 +128,11 @@ impl Controller for Ckydb {
     }
 
     fn delete(&mut self, key: &str) -> ckydb::Result<()> {
-        self.mut_lock
-            .lock()
-            .and_then(|_| Ok(self.store.delete(key)))
-            .expect("delete store")
+        self.store.delete(key)
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.mut_lock
-            .lock()
-            .and_then(|_| Ok(self.store.clear()))
-            .expect("clear store")
+        self.store.clear()
     }
 }
 
