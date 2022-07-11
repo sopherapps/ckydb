@@ -155,7 +155,7 @@ pub(crate) fn get_current_timestamp_str() -> io::Result<String> {
         .or_else(|err| Err(io::Error::new(ErrorKind::Other, err)))
 }
 
-/// Extracts a hashmap of keys and values from a string
+/// Extracts a hashmap of items and values from a string
 ///
 /// # Error
 ///
@@ -198,7 +198,7 @@ pub(crate) fn extract_tokens_from_str(content: &str) -> Vec<String> {
 }
 
 /// Deletes the key values corresponding to the keysToDelete
-/// if those keys exist in that file
+/// if those items exist in that file
 ///
 /// # Errors
 ///

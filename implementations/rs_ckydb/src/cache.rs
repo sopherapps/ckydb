@@ -1,5 +1,5 @@
+use crate::cky_map::CkyMap;
 use crate::errors as ckydb;
-use crate::strings::TokenizedString;
 
 /// `Caching` trait gives the basic representation of what
 /// caches should be able to do
@@ -20,14 +20,14 @@ pub(crate) trait Caching {
     fn is_in_range(&self, key: &str) -> bool;
 
     /// Removes the value corresponding to the passed `key`
-    fn remove(&mut self, key: &str) -> ckydb::Result<()>;
+    fn remove(&mut self, key: &str) -> ckydb::Result<String>;
 
     /// Updates the value corresponding to the passed `key` with the
-    /// given `value`
-    fn update(&mut self, key: &str, value: &str) -> ckydb::Result<()>;
+    /// given `value`, returning the old value if any
+    fn update(&mut self, key: &str, value: &str) -> ckydb::Result<Option<String>>;
 
     /// Retrieves the value corresponding to the given `key`
-    fn get(&self, key: &str) -> ckydb::Result<&str>;
+    fn get(&self, key: &str) -> ckydb::Result<String>;
 }
 
 /// `Cache` is the actual cache struct that caches data in memory
@@ -35,7 +35,7 @@ pub(crate) trait Caching {
 /// bounds `start` and `end` is loaded into `data`
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Cache {
-    pub data: TokenizedString,
+    pub data: CkyMap,
     pub start: String,
     pub end: String,
 }
@@ -45,7 +45,7 @@ impl Cache {
     // #[inline]
     pub(crate) fn new(content: String, start: String, end: String) -> Cache {
         Cache {
-            data: TokenizedString::from(content),
+            data: CkyMap::from(content),
             start,
             end,
         }
@@ -69,17 +69,17 @@ impl Caching for Cache {
     }
 
     #[inline(always)]
-    fn remove(&mut self, key: &str) -> ckydb::Result<()> {
+    fn remove(&mut self, key: &str) -> ckydb::Result<String> {
         self.data.delete(key)
     }
 
     #[inline(always)]
-    fn update(&mut self, key: &str, value: &str) -> ckydb::Result<()> {
+    fn update(&mut self, key: &str, value: &str) -> ckydb::Result<Option<String>> {
         self.data.insert(key, value)
     }
 
     #[inline(always)]
-    fn get(&self, key: &str) -> ckydb::Result<&str> {
+    fn get(&self, key: &str) -> ckydb::Result<String> {
         self.data.get(key)
     }
 }

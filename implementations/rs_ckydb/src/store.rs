@@ -1,13 +1,13 @@
 use crate::cache::{Cache, Caching};
+use crate::cky_map::CkyMap;
+use crate::cky_vector::CkyVector;
 use crate::constants::{
     DATA_FILE_EXT, DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, LOG_FILE_EXT, TOKEN_SEPARATOR,
 };
 use crate::errors as ckydb;
-use crate::errors::Error::{CorruptedDataError, NotFoundError};
-use crate::strings::TokenizedString;
+use crate::errors::Error::CorruptedDataError;
 use crate::sync::Lock;
 use crate::utils;
-use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use std::{fs, io};
 /// accessing and manipulating data in the database.
 ///
 /// It must also be able to [load] the data from disk into memory, e.g. at start up
-/// It should also be able to [vacuum] any keys that have been marked for deletion and are
+/// It should also be able to [vacuum] any items that have been marked for deletion and are
 /// thus no longer accessible
 ///
 /// [set]: Storage::set
@@ -95,8 +95,9 @@ pub(crate) struct Store {
     db_path: PathBuf,
     max_file_size_kb: f64,
     cache: Cache,
-    memtable: TokenizedString,
-    index: HashMap<String, String>,
+    memtable: CkyMap,
+    index: CkyMap,
+    deleted_keys: CkyVector,
     data_files: Vec<String>,
     current_log_file: String,
     current_log_file_path: PathBuf,
@@ -115,6 +116,7 @@ impl Storage for Store {
         self.vacuum()?;
         self.load_file_props_from_disk()?;
         self.load_index_from_disk()?;
+        self.load_deleted_keys_from_disk()?;
         self.load_memtable_from_disk()
     }
 
@@ -140,18 +142,14 @@ impl Storage for Store {
         }
 
         if is_new_key {
-            self.index.insert(key.to_string(), timestamped_key);
+            self.index.insert(key, &timestamped_key)?;
         }
 
         Ok(())
     }
 
     fn get(&mut self, key: &str) -> ckydb::Result<String> {
-        let timestamped_key = self.index.get(key).ok_or(NotFoundError {
-            key: "".to_string(),
-        })?;
-
-        let timestamped_key = timestamped_key.to_string();
+        let timestamped_key = self.index.get(key)?;
         self.get_value_for_key(timestamped_key).or_else(|err| {
             Err(CorruptedDataError {
                 data: Some(format!("error getting value: {}", err)),
@@ -159,20 +157,15 @@ impl Storage for Store {
         })
     }
 
-    // TODO: Deal with the key.to_string() call
     fn delete(&mut self, key: &str) -> ckydb::Result<()> {
-        let timestamped_key = self.index.get(key).ok_or(NotFoundError {
-            key: key.to_string(),
-        })?;
-
         let lock = Arc::clone(&self.del_file_lock);
+
         if let Ok(_) = lock.lock() {
-            utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])?;
-            let new_file_entry = format!("{}{}", timestamped_key, TOKEN_SEPARATOR);
-            utils::append_to_file(&self.del_file_path, &new_file_entry)?;
-
-            self.index.remove(key);
-
+            // Fixme: deleting from index should be last step
+            let timestamped_key = self.index.delete(key)?;
+            fs::write(&self.index_file_path, self.index.to_string())?;
+            self.deleted_keys.push(&timestamped_key);
+            fs::write(&self.del_file_path, self.deleted_keys.to_string())?;
             return Ok(());
         }
 
@@ -182,7 +175,7 @@ impl Storage for Store {
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.index.clear();
+        self.index = Default::default();
         self.clear_disk()?;
         self.load()
     }
@@ -221,6 +214,7 @@ impl Store {
             cache: Cache::new_empty(),
             memtable: Default::default(),
             index: Default::default(),
+            deleted_keys: Default::default(),
             data_files: vec![],
             current_log_file: "".to_string(),
             current_log_file_path: PathBuf::new(),
@@ -231,7 +225,7 @@ impl Store {
         }
     }
 
-    /// This does the actual vacuuming of removing keys that have benn marked for deletion
+    /// This does the actual vacuuming of removing items that have benn marked for deletion
     /// However, it does not employ any lock on the files. As such, calling it directly without
     /// securing the del_file_lock might cause data races
     ///
@@ -337,7 +331,19 @@ impl Store {
     // #[inline]
     fn load_index_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.index_file_path)?;
-        self.index = utils::extract_key_values_from_str(&content)?;
+        self.index = CkyMap::from(content);
+        Ok(())
+    }
+
+    /// Loads the deleted keys map from the del file
+    ///
+    /// # Error
+    ///
+    /// See [fs::read_to_string] and [utils::extract_key_values_from_str]
+    // #[inline]
+    fn load_deleted_keys_from_disk(&mut self) -> io::Result<()> {
+        let content = fs::read_to_string(&self.del_file_path)?;
+        self.deleted_keys = CkyVector::from(content);
         Ok(())
     }
 
@@ -349,7 +355,7 @@ impl Store {
     // #[inline]
     fn load_memtable_from_disk(&mut self) -> io::Result<()> {
         let content = fs::read_to_string(&self.current_log_file_path)?;
-        self.memtable = TokenizedString::from(content);
+        self.memtable = CkyMap::from(content);
         Ok(())
     }
 
@@ -372,7 +378,7 @@ impl Store {
         Ok(())
     }
 
-    /// Reads the del file and gets the keys to be deleted
+    /// Reads the del file and gets the items to be deleted
     ///
     /// # Errors
     ///
@@ -394,8 +400,8 @@ impl Store {
     ///
     /// [CorruptedDataError]: crate::errors::Error::CorruptedDataError
     fn get_timestamped_key(&mut self, key: &str) -> io::Result<(String, bool)> {
-        if let Some(k) = self.index.get(key) {
-            return Ok((k.to_string(), false));
+        if let Ok(k) = self.index.get(key) {
+            return Ok((k, false));
         }
 
         let timestamp = utils::get_current_timestamp_str()?;
@@ -418,10 +424,12 @@ impl Store {
     /// See [utils::delete_key_values_from_file]
     // #[inline]
     fn remove_timestamped_key_for_key_if_exists(&mut self, key: &str) -> io::Result<()> {
-        if let Some(_) = self.index.get(key) {
-            self.index.remove(key);
-            utils::delete_key_values_from_file(&self.index_file_path, &vec![key.to_string()])?;
-        }
+        if let Ok(_) = self.index.get(key) {
+            return match self.index.delete(key) {
+                Ok(_) => fs::write(&self.index_file_path, self.index.to_string()),
+                Err(e) => Err(io::Error::new(ErrorKind::Other, e)),
+            };
+        };
 
         Ok(())
     }
@@ -441,7 +449,7 @@ impl Store {
         if timestamped_key >= self.current_log_file {
             // FIXME: This to_string and map should not be done everytime even when there is no error
             let old_value = match self.memtable.get(&timestamped_key) {
-                Ok(v) => Some(v.to_owned()),
+                Ok(v) => Some(v),
                 Err(_) => None,
             };
 
@@ -487,7 +495,7 @@ impl Store {
             };
         }
 
-        if key.to_string() >= self.current_log_file {
+        if key >= &self.current_log_file[..] {
             self.memtable.delete(key)?;
             let result = fs::write(&self.current_log_file_path, self.memtable.to_string());
             return match result {
@@ -640,7 +648,7 @@ impl Store {
 
             let value = self.cache.get(&timestamped_key)?;
 
-            return Ok(value.to_string());
+            return Ok(value);
         }
 
         Err(CorruptedDataError {
@@ -662,12 +670,11 @@ impl Store {
 #[cfg(test)]
 mod test {
     use crate::cache::{Cache, Caching};
+    use crate::cky_map::CkyMap;
     use crate::constants::{DEL_FILENAME, INDEX_FILENAME, KEY_VALUE_SEPARATOR, TOKEN_SEPARATOR};
     use crate::store::{Storage, Store};
-    use crate::strings::TokenizedString;
     use crate::utils;
     use serial_test::serial;
-    use std::collections::HashMap;
     use std::ffi::OsString;
     use std::fs;
     use std::path::Path;
@@ -682,18 +689,8 @@ mod test {
     #[serial]
     fn load_updates_memory_props_from_data_on_disk() {
         let expected_cache = Cache::new_empty();
-        let expected_index = HashMap::from(
-            [
-                ("cow", "1655375120328185000-cow"),
-                ("dog", "1655375120328185100-dog"),
-                ("goat", "1655404770518678-goat"),
-                ("hen", "1655404670510698-hen"),
-                ("pig", "1655404770534578-pig"),
-                ("fish", "1655403775538278-fish"),
-            ]
-            .map(|(k, v)| (k.to_string(), v.to_string())),
-        );
-        let expected_memtable = TokenizedString::from(String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&"));
+        let expected_index = CkyMap::from(String::from("cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&pig><?&(^#1655404770534578-pig$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&"));
+        let expected_memtable = CkyMap::from(String::from("1655404770518678-goat><?&(^#678 months$%#@*&^&1655404670510698-hen><?&(^#567 months$%#@*&^&1655404770534578-pig><?&(^#70 months$%#@*&^&1655403775538278-fish><?&(^#8990 months$%#@*&^&"));
         let expected_data_files = DATA_FILES
             .map(|filename| filename.trim_end_matches(".cky").to_string())
             .to_vec();
@@ -727,8 +724,7 @@ mod test {
         let db_path = Path::new(DB_PATH);
         let index_file_path = db_path.join(INDEX_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
-        let empty_map: HashMap<String, String> = Default::default();
-        let empty_tokenized_string: TokenizedString = Default::default();
+        let empty_cky_map: CkyMap = Default::default();
 
         utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
         store.load().expect("loads store");
@@ -744,8 +740,8 @@ mod test {
 
         assert_eq!(expected_cache, store.cache);
         assert_ne!("".to_string(), store.current_log_file);
-        assert_eq!(empty_map, store.index);
-        assert_eq!(empty_tokenized_string, store.memtable);
+        assert_eq!(empty_cky_map, store.index);
+        assert_eq!(empty_cky_map, store.memtable);
         assert_eq!(EMPTY_LIST, store.data_files);
         assert_eq!(expected_files, actual_files);
         assert_eq!(index_file_path, store.index_file_path);
@@ -781,7 +777,7 @@ mod test {
         );
 
         // actual
-        let value_in_memtable = store.memtable.get(timestamped_key).unwrap();
+        let value_in_memtable = store.memtable.get(&timestamped_key).unwrap();
         let index_file_content = fs::read_to_string(index_file_path).expect("read index file");
         let log_file_content = fs::read_to_string(log_file_path).expect("read log file");
 
@@ -821,7 +817,7 @@ mod test {
         );
 
         // actual
-        let value_in_memtable = store.memtable.get(timestamped_key).unwrap();
+        let value_in_memtable = store.memtable.get(&timestamped_key).unwrap();
         let index_file_content = fs::read_to_string(index_file_path).expect("read index file");
         let log_file_content = fs::read_to_string(log_file_path).expect("read log file");
 
@@ -851,7 +847,7 @@ mod test {
             format!("{}{}{}", timestamped_key, KEY_VALUE_SEPARATOR, value);
 
         // actual
-        let value_in_cache = store.cache.get(timestamped_key).unwrap();
+        let value_in_cache = store.cache.get(&timestamped_key).unwrap();
         let data_file_content = fs::read_to_string(data_file_path).expect("read data file");
 
         assert_eq!(value, value_in_cache);
@@ -940,13 +936,7 @@ mod test {
     #[serial]
     fn delete_key_removes_key_from_index_and_adds_it_to_del_file() {
         let key = "pig";
-        let expected_index = HashMap::from([
-            (String::from("cow"), String::from("1655375120328185000-cow")),
-            (String::from("dog"), String::from("1655375120328185100-dog")),
-            (String::from("goat"), String::from("1655404770518678-goat")),
-            (String::from("hen"), String::from("1655404670510698-hen")),
-            (String::from("fish"), String::from("1655403775538278-fish")),
-        ]);
+        let expected_index = CkyMap::from("cow><?&(^#1655375120328185000-cow$%#@*&^&dog><?&(^#1655375120328185100-dog$%#@*&^&goat><?&(^#1655404770518678-goat$%#@*&^&hen><?&(^#1655404670510698-hen$%#@*&^&fish><?&(^#1655403775538278-fish$%#@*&^&");
         let expected_keys_marked_for_delete = vec!["1655404770534578-pig"];
         let mut store = Store::new(DB_PATH, MAX_FILE_SIZE_KB);
         let db_path = Path::new(DB_PATH);
@@ -969,9 +959,9 @@ mod test {
             Err(err) => assert!(err.to_string().contains("not found")),
         }
 
-        assert_eq!(expected_index, map_from_idx_file);
+        assert_eq!(expected_index.map(), map_from_idx_file);
         assert_eq!(expected_keys_marked_for_delete, list_from_del_file);
-        assert_eq!(expected_index, store.index);
+        assert_eq!(expected_index.to_string(), store.index.to_string());
     }
 
     #[test]
@@ -998,9 +988,8 @@ mod test {
         let db_path = Path::new(DB_PATH);
         let index_file_path = db_path.join(INDEX_FILENAME);
         let del_file_path = db_path.join(DEL_FILENAME);
-        let empty_map: HashMap<String, String> = Default::default();
         let empty_list: Vec<String> = Default::default();
-        let empty_tokenized_string: TokenizedString = Default::default();
+        let empty_cky_map: CkyMap = Default::default();
 
         utils::clear_dummy_file_data_in_db(DB_PATH).expect("clears dummy data in db");
         utils::add_dummy_file_data_in_db(DB_PATH).expect("adds dummy data in db");
@@ -1017,8 +1006,8 @@ mod test {
 
         assert_eq!(expected_cache, store.cache);
         assert_ne!("".to_string(), store.current_log_file);
-        assert_eq!(empty_map, store.index);
-        assert_eq!(empty_tokenized_string, store.memtable);
+        assert_eq!(empty_cky_map, store.index);
+        assert_eq!(empty_cky_map, store.memtable);
         assert_eq!(empty_list, store.data_files);
         assert_eq!(expected_files, actual_files);
         assert_eq!(index_file_path, store.index_file_path);

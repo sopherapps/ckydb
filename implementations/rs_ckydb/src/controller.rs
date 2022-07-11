@@ -320,14 +320,14 @@ mod tests {
 
         for (k, v) in &TEST_RECORDS {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             };
         }
 
         for (k, v) in &TEST_RECORDS {
             match db.get(*k) {
                 Ok(value) => assert_eq!(value, (*v).to_string()),
-                Err(err) => panic!("error getting keys: {}", err),
+                Err(err) => panic!("error getting items: {}", err),
             }
         }
     }
@@ -335,7 +335,6 @@ mod tests {
     #[test]
     #[serial]
     fn set_old_key_should_update_old_key_value() {
-        // FIXME: This is still failing
         let mut old_records = HashMap::from(TEST_RECORDS);
 
         let updates = HashMap::from([
@@ -350,7 +349,7 @@ mod tests {
 
         for (k, v) in &old_records {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             };
         }
 
@@ -359,21 +358,21 @@ mod tests {
                 Ok(_) => {
                     old_records.remove(k);
                 }
-                Err(err) => panic!("error setting keys: {}", err),
+                Err(err) => panic!("error setting items: {}", err),
             };
         }
 
         for (k, v) in &updates {
             match db.get(*k) {
                 Ok(value) => assert_eq!(*v, value),
-                Err(err) => panic!("error getting keys: {}", err),
+                Err(err) => panic!("error getting items: {}", err),
             };
         }
 
         for (k, v) in &old_records {
             match db.get(*k) {
                 Ok(value) => assert_eq!(*v, value),
-                Err(err) => panic!("error getting keys: {}", err),
+                Err(err) => panic!("error getting items: {}", err),
             };
         }
     }
@@ -388,7 +387,7 @@ mod tests {
 
         match db.get(key) {
             Ok(v) => assert_eq!(value.to_string(), v),
-            Err(err) => panic!("error getting keys: {}", err),
+            Err(err) => panic!("error getting items: {}", err),
         }
     }
 
@@ -402,7 +401,7 @@ mod tests {
         let mut db = connect(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC).expect("connect");
 
         if let Err(err) = db.get(key) {
-            panic!("error getting keys: {}", err);
+            panic!("error getting items: {}", err);
         }
 
         // remove the files to ensure data is got from memory only
@@ -412,7 +411,7 @@ mod tests {
 
         match db.get(key) {
             Ok(v) => assert_eq!(value.to_string(), v),
-            Err(err) => panic!("error getting keys: {}", err),
+            Err(err) => panic!("error getting items: {}", err),
         }
     }
 
@@ -424,7 +423,7 @@ mod tests {
         let mut db = connect_to_test_db(DB_PATH, MAX_FILE_SIZE_KB, VACUUM_INTERVAL_SEC).unwrap();
 
         if let Err(err) = db.set(key, value) {
-            panic!("error getting keys: {}", err);
+            panic!("error getting items: {}", err);
         }
 
         // remove the files to ensure data is got from memory only
@@ -434,7 +433,7 @@ mod tests {
 
         match db.get(key) {
             Ok(v) => assert_eq!(value.to_string(), v),
-            Err(err) => panic!("error getting keys: {}", err),
+            Err(err) => panic!("error getting items: {}", err),
         }
     }
 
@@ -448,7 +447,7 @@ mod tests {
 
         for (k, v) in &old_records {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             };
         }
 
@@ -457,14 +456,14 @@ mod tests {
                 Ok(_) => {
                     old_records.remove(*k);
                 }
-                Err(err) => panic!("error deleting keys: {}", err),
+                Err(err) => panic!("error deleting items: {}", err),
             }
         }
 
         for (k, v) in &old_records {
             match db.get(*k) {
                 Ok(value) => assert_eq!(*v, value),
-                Err(err) => panic!("error getting keys: {}", err),
+                Err(err) => panic!("error getting items: {}", err),
             };
         }
 
@@ -483,7 +482,7 @@ mod tests {
 
         for (k, v) in &TEST_RECORDS {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             };
         }
 
@@ -508,12 +507,12 @@ mod tests {
 
         for (k, v) in &TEST_RECORDS {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             };
         }
 
         if let Err(err) = db.delete(key_to_delete) {
-            panic!("error deleting keys: {}", err)
+            panic!("error deleting items: {}", err)
         }
 
         let idx_file_contents_pre_vacuum =
@@ -562,7 +561,7 @@ mod tests {
                 let value = (*v).to_string();
 
                 if let Err(err) = db.set(&key, &value) {
-                    panic!("error setting keys: {}", err)
+                    panic!("error setting items: {}", err)
                 }
 
                 data.insert(key, value);
@@ -573,7 +572,7 @@ mod tests {
 
         for (k, v) in &post_roll_data {
             if let Err(err) = db.set(*k, *v) {
-                panic!("error setting keys: {}", err);
+                panic!("error setting items: {}", err);
             }
         }
 
