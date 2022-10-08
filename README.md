@@ -1,5 +1,7 @@
 # ckydb
 
+__THIS IS FOR PRODUCTION USE (YET)__
+
 A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
 
 It is read as 'skydb'
