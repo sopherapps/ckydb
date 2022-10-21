@@ -1,6 +1,6 @@
 # ckydb
 
-__THIS IS FOR PRODUCTION USE (YET)__
+__THIS IS NOT FOR PRODUCTION USE (IT WILL CHOKE MEMORY). INSTEAD CONSIDER [scdb](https://github.com/sopherapps/scdb)__
 
 A simple fast memory-first thread-safe (or goroutine-safe for Go) key-value embedded database that persists data on disk.
 
