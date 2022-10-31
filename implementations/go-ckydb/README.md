@@ -19,7 +19,7 @@ go mod init ckydb_example
 go get github.com/sopherapps/ckydb/implementations/go-ckydb
 ```
 
-- Create a main.py file in the project folder and add the following code
+- Create a main.go file in the project folder and add the following code
 
 ```go
 package main
